@@ -1360,7 +1360,9 @@ function occupy(t, army, B) {
   chronT('war', dead < 4 ? `${t.name} opens its gates to the ${polityTitle(pol)}.` : cruel ? `${t.name} falls to the ${polityTitle(pol)} and is put to the sword. ${dead} die in the fighting, and the sack is worse.` : `${t.name} falls to the ${polityTitle(pol)} after a fight that cost ${dead} lives.`, t);
   pathXP(pol, 'con', 120);
   if (cruel) {
-    for (let k = tn(t) - 1; k >= 0; k--) { const p = t.members[k]; if (rnd() < 0.18 && !p.army) killPerson(p, 'killed in the sack'); }
+    // the people simulated one by one, then the same share of the crowd behind them (tn counts both; members holds only the first)
+    for (let k = t.members.length - 1; k >= 0; k--) { const p = t.members[k]; if (p && rnd() < 0.18 && !p.army) killPerson(p, 'killed in the sack'); }
+    if (t.alive && t.folk > 0) { const f = Math.floor(t.folk * 0.18); t.folk -= f; W.folkN -= f; t.scale = tn(t) / Math.max(1, t.members.length); }
     if (!t.alive) return;
     let burned = 0;
     for (const b of t.blds.slice()) { if (b.type === 'hearth' || b.up >= 0) continue; if (rnd() < 0.12) { if (FXH) FXH.burn(b.x, b.y); removeBuilding(b); burned++; } }
