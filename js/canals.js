@@ -4,8 +4,11 @@
 
 const CANAL_TILE_COST = { [R.WOOD]: 1.5, [R.STONE]: 2 };
 // The cheapest line across land from a (a tile, or a list of tiles to start from) to anywhere on the goal network, to tile b,
-// or to any water tile goalFn accepts. No going through buildings. A step in the ground needs locks.
-function surveyCanal(a, goalNet, b, locks, maxLen, goalFn) {
+// or to any water tile goalFn accepts. A step in the ground needs locks. Walls stop it; ordinary buildings and ruins stop it too unless
+// `clear`, when they can be bought and pulled down, at a price that keeps the line out in the fields wherever it can be.
+// Never a town's hearth, a quay, or one of the great buildings.
+const canalSpares = b => !b || b.type === 'hearth' || b.size >= 3 || (BLD[b.type] && BLD[b.type].port);
+function surveyCanal(a, goalNet, b, locks, maxLen, goalFn, clear) {
   const water = W.water, w = W.w, elev = W.elev, occ = W.occ, net = W.seaNet;
   const open = sid, closed = sid + 1; sid += 2;
   if (sid > 2000000000) { stampA.fill(0); sid = 2; }
@@ -28,10 +31,11 @@ function surveyCanal(a, goalNet, b, locks, maxLen, goalFn) {
       if (stampA[ni] === closed || water[ni] === 3) continue;
       // a cut goes across land only: the one stretch of water it may enter is the one it's meant to reach
       if (net[ni]) { if (!isGoal(ni) || k > 3 || net[cur]) continue; }
-      else if (water[ni] || occ[ni] === 1 || occ[ni] === 3 || occ[ni] === 4) continue;
+      else if (water[ni] || occ[ni] === 3) continue;
+      else if (occ[ni] === 1 || occ[ni] === 4) { if (!clear || (occ[ni] === 1 && canalSpares(W.bAt.get(ni)))) continue; }
       const step = Math.abs(elev[ni] - elev[cur]);
       if (step > 0.02 && !locks) continue;
-      let c = 12 + Math.max(0, elev[ni]) * 90 + (step > 0.02 ? step * 700 : 0) + (W.biome[ni] === B.ROCK ? 60 : 0) + (occ[ni] === 2 ? 4 : 0) + (W.road[ni] >= 2 ? 10 : 0);
+      let c = 12 + Math.max(0, elev[ni]) * 90 + (step > 0.02 ? step * 700 : 0) + (W.biome[ni] === B.ROCK ? 60 : 0) + (occ[ni] === 2 ? 4 : 0) + (W.road[ni] >= 2 ? 10 : 0) + (occ[ni] === 1 ? 160 : occ[ni] === 4 ? 25 : 0);
       if (k > 3) c *= 1.414;
       const g = g0 + c;
       if (stampA[ni] === open && gs[ni] <= g) continue;
@@ -57,7 +61,20 @@ function cutStarts(t, port, r) {
   }
   return out;
 }
-function digCanalTile(i, level, job) {
+// A building in the canal's way is bought from its town at a fair price and pulled down; the families in it find somewhere else.
+function clearForCanal(i, job, t) {
+  const b = W.bAt.get(i);
+  if (!b || canalSpares(b)) return false;
+  if (!b.ruin && b.town && b.town.alive) {
+    const pol = t.polity, cur = pol.cur, price = 18 * b.size * b.size * Math.max(1, cur.level) * (b.type === 'house' ? 1 + (b.tier || 0) * 0.4 : 2);
+    if (cur.kind >= 2) { cur.treasury -= price; cur.spentY += price; b.town.cash = (b.town.cash || 0) + price; }
+    job.razed = (job.razed || 0) + 1;
+  }
+  if (FXH) FXH.rubble(b.x, b.y, b.size);
+  removeBuilding(b);
+  return true;
+}
+function digCanalTile(i, level, job, t) {
   if (!level) {  // an irrigation ditch: a narrow cut along the field edge, not a waterway
     if (W.occ[i] === 1 || W.occ[i] === 3 || W.water[i] || W.river[i] || W.canal[i]) return;
     if (W.occ[i] === 2) dropField(i);
@@ -68,7 +85,8 @@ function digCanalTile(i, level, job) {
     return;
   }
   if (W.occ[i] === 2) dropField(i);
-  if (W.occ[i] === 1 || W.occ[i] === 3 || W.water[i]) return;
+  if ((W.occ[i] === 1 || W.occ[i] === 4) && t) clearForCanal(i, job, t);
+  if (W.occ[i] === 1 || W.occ[i] === 3 || W.occ[i] === 4 || W.water[i]) return;
   W.canal[i] = Math.max(W.canal[i], level);
   W.canalId[i] = job.id;
   W.tree[i] = 0; W.forage[i] = 0; W.plant[i] = 0; W.baseTree[i] = 0; W.baseForage[i] = 0;
@@ -137,11 +155,11 @@ function considerCanals(t) {
   // a lake or a navigable river within reach that no boat from here can get to yet: a barge cut joins it to the rest
   if (!best) {
     const lk = otherWater(port, range * 0.7);
-    if (lk >= 0) { const path = surveyCanal(cutStarts(t, port, 10), W.seaNet[lk], -1, locks, range); if (path && path.length <= range) startCanal(t, path, 1, `a barge canal to the ${waterNameAt(lk) || 'water inland'}`); }
+    if (lk >= 0) { const path = surveyCanal(cutStarts(t, port, 10), W.seaNet[lk], -1, locks, range, null, true); if (path && path.length <= range) startCanal(t, path, 1, `a barge canal to the ${waterNameAt(lk) || 'water inland'}`); }
     return;
   }
   if (cut) {
-    const path = surveyCanal(cutStarts(t, port, 10), 0, cut.to, locks, range);
+    const path = surveyCanal(cutStarts(t, port, 10), 0, cut.to, locks, range, null, true);
     if (path && path.length <= range * 1.6) startCanal(t, path, level, `a short cut for the ships to ${best.name}, saving ${Math.round(cut.saved)} leagues`);
     return;
   }
@@ -150,7 +168,7 @@ function considerCanals(t) {
   const w = W.w, qx = q % w, qy = (q / w) | 0, diff = W.seaNet[q] !== here;
   // to other water: anywhere on it will do; round a long coast: come out on the same water close to the other town
   const near = j => W.seaNet[j] === here && Math.abs(j % w - qx) + Math.abs(((j / w) | 0) - qy) <= 6;
-  const path = surveyCanal(cutStarts(t, port, 10), diff ? W.seaNet[q] : 0, -1, locks, range, diff ? null : near);
+  const path = surveyCanal(cutStarts(t, port, 10), diff ? W.seaNet[q] : 0, -1, locks, range, diff ? null : near, true);
   if (path && path.length <= range * 1.6) startCanal(t, path, diff || level === 2 ? level : 1, `a canal through to ${best.name}`);
 }
 // Ships from here to o sail the long way round. Walk the straight line between the two harbours: after the first stretch of land,
@@ -284,7 +302,7 @@ function nearestNet(t, locks, range) {
   for (let r = 3; r <= range; r += 3) {
     for (let q = 0; q < r * 4; q++) {
       const a = (q / (r * 4)) * 6.283, i = Math.round(t.y + Math.sin(a) * r) * W.w + Math.round(t.x + Math.cos(a) * r);
-      if (i > 0 && i < W.seaNet.length && W.seaNet[i]) return surveyCanal(t.i, W.seaNet[i], -1, locks, range + 4);
+      if (i > 0 && i < W.seaNet.length && W.seaNet[i]) return surveyCanal(t.i, W.seaNet[i], -1, locks, range + 4, null, true);
     }
   }
   return null;
@@ -308,7 +326,7 @@ function digCanal(p, t) {
     else if (ditch) t.stock[R.WOOD] -= 0.5;
     else if (canPay(t.stock, CANAL_TILE_COST)) pay(t.stock, CANAL_TILE_COST); else t.stock[R.BRICK] -= 3;
     if (FXH && !ditch) FXH.rubble(i % W.w, (i / W.w) | 0, 1);
-    digCanalTile(i, J0.level, J0);
+    digCanalTile(i, J0.level, J0, t);
     J0.built++;
   }
   J0.prog = Math.min(J0.prog, 200);
@@ -334,6 +352,7 @@ function finishCanal(t) {
   if (J0.cut) { W.cutsDone = W.cutsDone || {}; W.cutsDone[J0.cut] = Math.floor(year()); }
   chronT('wonder', J0.cut ? `The ${J0.name} opens. Ships pass from ${J0.from} to ${J0.to} without the long voyage round ${J0.round}.`
     : J0.upgrade ? `The ${J0.name} is widened. Ocean ships pass through ${t.name} now.` : `The ${J0.name} opens. Boats can reach where only carts could go.`, t);
+  if (J0.razed) chronT('misc', `${J0.razed} building${J0.razed > 1 ? 's were' : ' was'} bought and pulled down to make way for the ${J0.name}.`, t);
   scanTown(t);
   pathXP(t.polity, 'mar', 200);
 }
@@ -468,7 +487,7 @@ function earthCutsYear() {
     const starts = [];
     for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) { const j = pa + dy * w + dx; if (j > w && j < W.seaNet.length - w && W.seaNet[j] === W.seaNet[pa]) starts.push(j); }
     const bx = pb % w, by = (pb / w) | 0, near = j => W.seaNet[j] && Math.abs(j % w - bx) + Math.abs(((j / w) | 0) - by) <= 4;
-    const path = surveyCanal(starts, 0, -1, true, 40, near);
+    const path = surveyCanal(starts, 0, -1, true, 40, near, true);
     if (!path || path.length > 40) continue;
     // a great public work: the treasury pays for it up front, by the length and the price of labour
     const pol = best.polity, cur = pol.cur, cost = 1500 * Math.max(1, cur.level) * (path.length + 3);

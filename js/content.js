@@ -52,7 +52,7 @@ S('desalination', 'Desalination', 9, J.SCHOLAR, 2200000, ['renewables'], { urban
 S('carboncapture', 'Carbon Capture', 9, J.SCHOLAR, 2400000, ['renewables', 'robotics'], {}, 'Pull the smoke of the last three centuries back out of the sky.', { tag: 'energy' });
 // Canals.
 S('barges', 'River Barges', 2, J.FISH, 4200, ['sailing'], { cargo: 1.12 }, 'A flat hull, a long pole and a slow steady river.', { tag: 'sea', alt: J.TRADE, cond: t => t.near.river > 0, condText: 'Lives on a river' });
-S('locks', 'Canal Locks', 5, J.BUILD, 40000, ['canals'], { locks: 1 }, 'Two gates and a chamber, and a boat climbs a hill.', { tag: 'sea', alt: J.SCHOLAR });
+S('locks', 'Canal Locks', 4, J.BUILD, 26000, ['canals'], { locks: 1 }, 'Two gates and a chamber, and a boat climbs a hill.', { tag: 'sea', alt: J.SCHOLAR });
 S('shipcanal', 'Ship Canals', 6, J.BUILD, 110000, ['locks', 'steam'], { cargo: 1.15 }, 'Cut wide and deep: ocean ships cross a country, and two seas become one.', { tag: 'sea', alt: J.SAILOR });
 // The sea: hulls and how to find your way across it.
 S('clinker', 'Clinker Hulls', 2, J.FISH, 5000, ['sailing'], { seaRange: 1.1, sail: 2 }, 'Overlapping planks make a hull that flexes with the waves, tough enough for the open ocean.', { tag: 'sea', alt: J.SAILOR });
@@ -167,7 +167,7 @@ S('constitution', 'Constitutionalism', 5, J.SCHOLAR, 50000, ['printing', 'bankin
 S('stockmarket', 'Stock Exchange', 5, J.TRADE, 45000, ['banking', 'chartered'], { trade: 1.2 }, 'Anyone can own a piece of a voyage.', { tag: 'trade' });
 S('plantation', 'Plantations', 5, J.FARM, 40000, ['rotation', 'navigation'], { farm: 1.12 }, 'Single crops at huge scale, grown for distant markets.', { tag: 'farm', alt: J.TRADE });
 S('inoculation', 'Inoculation', 5, J.SERVICE, 45000, ['medicine', 'printing'], { plague: 0.8, infant: 0.9 }, 'A small sickness on purpose saves you from the big one.', { tag: 'med', alt: J.SCHOLAR });
-S('canals', 'Canals', 5, J.BUILD, 38000, ['engineering', 'deepmine'], { cargo: 1.2 }, 'One horse can pull fifty tons on still water.', { tag: 'trade' });
+S('canals', 'Canals', 3, J.BUILD, 18000, ['engineering', 'irrigation'], { cargo: 1.2 }, 'Dug by thousands, the way the Persians, the Romans and the Chinese emperors dug them: one horse can pull fifty tons on still water.', { tag: 'trade' });
 S('pumps', 'Mine Pumps', 5, J.MINE, 35000, ['deepmine'], { mine: 1.15 }, 'The deepest seams stop flooding.', { tag: 'machine' });
 S('encyclopedia', 'Encyclopedias', 5, J.SCHOLAR, 45000, ['printing'], { research: 1.08, spread: 1.2 }, 'Everything known, in order, on one shelf.', { tag: 'lore' });
 S('rifle', 'Rifles', 6, J.SOLDIER, 110000, ['steel', 'musket'], {}, 'Grooves in the barrel: accurate killing at half a mile.', { tag: 'war', alt: J.CRAFT, mil: 1 });

@@ -70,7 +70,9 @@ Water, land and getting about: seas and lakes drain downhill through named river
 fresh water. Coal, iron, oil and the rest lie in veins that fit their geology, and give each realm a
 character. Snow has real depth, glaciers and avalanches, and lakes freeze. Trails become roads that
 widen. People go round buildings and spread out when streets fill. Ships stay on water, rivers and
-canals; towns dig canals where they pay. The tree of inventions now runs to the Stellar Age.
+canals; towns dig canals where they pay (Canals come in the Iron Age, locks in the Middle Ages, ship canals with steam),
+and an important cut may buy and pull down the houses and workshops in its way, never a town's hearth, quay or great building,
+nor its walls. The tree of inventions now runs to the Stellar Age.
 
 Money: barter, then goods as money, coin, banknotes, paper and electronic money, one currency per
 realm. Towns have their own prices and wages; merchants trade where prices differ. Taxes, tariffs and
