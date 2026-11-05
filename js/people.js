@@ -275,7 +275,7 @@ function straightWalk(p, to) {
 // Something's in the way: head for the goal and step round whatever stops you, the way a person actually does. Costs a few dozen comparisons, against thousands for a search.
 const _feel = new Int32Array(120);
 function feelWay(p, a, to, ax, ay, bx, by, n) {
-  const w = W.w, water = W.water, cost = W.cost, occ = W.occ, X = NB_X, Y = NB_Y, D = NB_D, limit = Math.min(118, n * 3 + 8);
+  const w = W.w, water = W.water, cost = W.cost, occ = W.occ, elev = W.elev, X = NB_X, Y = NB_Y, D = NB_D, limit = Math.min(118, n * 3 + 8);
   let cx = ax, cy = ay, cur = a, len = 0, last = -1, prev = -1;
   _feel[len++] = a;
   while (cur !== to) {
@@ -286,7 +286,7 @@ function feelWay(p, a, to, ax, ay, bx, by, n) {
       if (j === last || j === prev) continue;
       if (j !== to && (water[j] || cost[j] > 70 || occ[j] === 1 || occ[j] === 3)) continue;
       if (water[j]) continue;
-      const up = W.elev[j] - W.elev[cur];
+      const up = elev[j] - elev[cur];
       if (up > 0.1) continue;  // too steep to just scramble up: leave that to a proper search
       const ex = cx + X[k] - bx, ey = cy + Y[k] - by, s = (ex < 0 ? -ex : ex) + (ey < 0 ? -ey : ey) + (k > 3 ? 0.4 : 0) + (up > CLIMB_FREE ? (up - CLIMB_FREE) * 16 : 0);
       if (s < bs) { bs = s; best = j; bk = k; }
@@ -1325,38 +1325,62 @@ function holdCost(i) {
   c *= 0.75 + hash2(x >> 3, y >> 3, 17) * 0.3 + hash2(x, y, 19) * 0.12;
   return c < 4 ? 4 : c > 250 ? 250 : Math.round(c);
 }
-function updateTerritory() {
-  const w = W.w, h = W.h, n = w * h;
+function terrHoldAll() {
+  const n = W.w * W.h;
   if (!terrStr || terrStr.length !== n) { terrStr = new Float32Array(n); terrDist = new Int32Array(n).fill(-1); terrHold = new Uint8Array(n); }
   for (let i = 0; i < n; i++) terrHold[i] = W.water[i] ? 0 : holdCost(i);
-  terrStr.fill(0); W.owner.fill(-1);
+}
+// One town's reach, cheapest first, bucket by bucket (the costs are small whole numbers), into str/own.
+function terrFlood(t, str, own) {
+  if (W.water[t.i]) return;
   const B0 = terrBuckets, T0 = terrTouched;
-  for (const t of W.towns) {
-    if (W.water[t.i]) continue;
-    const r = clamp(9 + Math.sqrt(tn(t)) * 1.5 + (t.nomad ? -2 : 0), 7, 46), budget = Math.round(r * 10);
-    for (let b = 0; b <= budget; b++) { if (B0[b]) B0[b].length = 0; else B0[b] = []; }
-    terrDist[t.i] = 0; B0[0].push(t.i); T0.push(t.i);
-    // cheapest first, bucket by bucket (the costs are small whole numbers)
-    for (let b = 0; b <= budget; b++) {
-      const L = B0[b];
-      for (let q = 0; q < L.length; q++) {
-        const i = L[q];
-        if (terrDist[i] !== b) continue;
-        const s = 1 - b / (budget + 10);
-        if (s > terrStr[i]) { terrStr[i] = s; W.owner[i] = t.id; }
-        for (let k = 0; k < 8; k++) {
-          const j = i + NB_D[k], c = terrHold[j];
-          if (!c) continue;
-          const nd = b + (k < 4 ? c : (c * 1.41) | 0);
-          if (nd > budget) continue;
-          const d0 = terrDist[j];
-          if (d0 < 0 || nd < d0) { if (d0 < 0) T0.push(j); terrDist[j] = nd; B0[nd].push(j); }
-        }
+  const r = clamp(9 + Math.sqrt(tn(t)) * 1.5 + (t.nomad ? -2 : 0), 7, 46), budget = Math.round(r * 10);
+  for (let b = 0; b <= budget; b++) { if (B0[b]) B0[b].length = 0; else B0[b] = []; }
+  terrDist[t.i] = 0; B0[0].push(t.i); T0.push(t.i);
+  for (let b = 0; b <= budget; b++) {
+    const L = B0[b];
+    for (let q = 0; q < L.length; q++) {
+      const i = L[q];
+      if (terrDist[i] !== b) continue;
+      const s = 1 - b / (budget + 10);
+      if (s > str[i]) { str[i] = s; own[i] = t.id; }
+      for (let k = 0; k < 8; k++) {
+        const j = i + NB_D[k], c = terrHold[j];
+        if (!c) continue;
+        const nd = b + (k < 4 ? c : (c * 1.41) | 0);
+        if (nd > budget) continue;
+        const d0 = terrDist[j];
+        if (d0 < 0 || nd < d0) { if (d0 < 0) T0.push(j); terrDist[j] = nd; B0[nd].push(j); }
       }
     }
-    for (let k = 0; k < T0.length; k++) terrDist[T0[k]] = -1;
-    T0.length = 0;
   }
+  for (let k = 0; k < T0.length; k++) terrDist[T0[k]] = -1;
+  T0.length = 0;
+}
+function updateTerritory() {
+  terrJob = null;  // fresher than any spread-out pass still under way
+  terrHoldAll();
+  terrStr.fill(0); W.owner.fill(-1);
+  for (const t of W.towns) terrFlood(t, terrStr, W.owner);
+  if (onTerritory) onTerritory();
+}
+// The same borders worked out a couple of dozen towns a tick, so the new year doesn't stall on them; the map changes over in one go at the end.
+let terrJob = null;
+function terrBegin() {
+  terrHoldAll();
+  const n = W.w * W.h;
+  if (!terrJob || terrJob.str.length !== n) terrJob = { w: W, towns: null, k: 0, str: new Float32Array(n), own: new Int16Array(n) };
+  const J0 = terrJob;
+  J0.w = W; J0.towns = W.towns.slice(); J0.k = 0; J0.str.fill(0); J0.own.fill(-1);
+}
+function terrStep() {
+  const J0 = terrJob;
+  if (!J0 || !J0.towns) return;
+  if (J0.w !== W || J0.own.length !== W.owner.length) { terrJob = null; return; }
+  const T = J0.towns, end = Math.min(T.length, J0.k + 24);
+  for (; J0.k < end; J0.k++) terrFlood(T[J0.k], J0.str, J0.own);
+  if (J0.k < T.length) return;
+  W.owner.set(J0.own); J0.towns = null;
   if (onTerritory) onTerritory();
 }
 
@@ -1480,6 +1504,8 @@ function personYear(p) {
 }
 
 // ---- the tick ----
+let LOD_ID = new Int32Array(0);  // stepWorld's copy of each list slot's person id, and who was in the slot (LOD_OBJ) when it was read
+const LOD_OBJ = [];
 function stepWorld() {
   W.tick++;
   const tick = W.tick;
@@ -1496,6 +1522,21 @@ function stepWorld() {
         if (vw && p.path.length === 2) { const i = glideTile(p); if (inView(i)) unquiet(p, i); }
         p.mv += p.spd; if (p.mv >= p.need) stepTile(p);
       }
+      else { if (p.mv > 0) settle(p); if (tick >= p.wake) think(p); }
+      if ((p.id + m0) % TPY === 0 && p.alive) personYear(p);
+    }
+  } else if (!vw) {
+    // nobody is on screen to glide (far out, or no screen): only this turn's share is visited. Each slot's id is kept beside the list,
+    // so the others are passed over without reaching into the person at all (a slot whose occupant changed is read afresh).
+    if (LOD_ID.length < n0) { const g = new Int32Array(n0 + 4096); g.set(LOD_ID); LOD_ID = g; }
+    const PID = LOD_ID, PO = LOD_OBJ;
+    if (PO.length > n0) PO.length = n0;
+    for (let k = n0 - 1; k >= 0; k--) {
+      const p = P[k];
+      let id;
+      if (PO[k] === p) id = PID[k]; else { PO[k] = p; id = PID[k] = p.id; }
+      if ((id + tick) % turn !== 0) continue;
+      if (p.st === 1) { p.mv += p.spd * turn; while (p.st === 1 && p.mv >= p.need) stepTile(p); }
       else { if (p.mv > 0) settle(p); if (tick >= p.wake) think(p); }
       if ((p.id + m0) % TPY === 0 && p.alive) personYear(p);
     }
@@ -1539,6 +1580,7 @@ function stepWorld() {
     const t = towns[k];
     if ((tick + t.offset) % TPSEASON === 0) townSeason(t, Math.floor((tick + t.offset) / TPSEASON) % 4);
     if (t.alive && (tick + t.offset) % TPY === 7) { townYear(t); if (t.alive) maybeRail(t); }
+    else if (t.alive && (tick + t.offset) % TPY === 120) cityYear(t);  // its streets and car parks, half a year from its own new year (once spread out, not all on the world's)
   }
   if (tick % TPSEASON === 0) {
     const s = seasonOf();
@@ -1552,9 +1594,21 @@ function stepWorld() {
   if (W.ships.length) shipTick();
   if (W.rails) railTick();
   if (tick % 2 === 0 && W.polities.some(p => p.alive && p.techs > 60)) planeTick();
-  if (tick % TPY === 0) yearlyWorld();
+  const yp = tick % TPY;
+  if (yp < 9) yearlyWorld(yp);
+  if (terrJob && terrJob.towns) terrStep();
 }
-function yearlyWorld() {
+// The new year's world-wide work, spread over its first few ticks (a phase a tick) so the turn of the year doesn't stall the game.
+function yearlyWorld(ph) {
+  if (ph === undefined) { for (let k = 0; k < 9; k++) yearlyWorld(k); for (const t of W.towns) if (t.alive) cityYear(t); if (terrJob && terrJob.towns) { while (terrJob && terrJob.towns) terrStep(); } return; }
+  if (ph === 1) { updatePolities(); return; }
+  if (ph === 2) { revolutionsYear(); for (const pol of W.polities) if (pol.alive && pol.towns > 1) reliefYear(pol); return; }
+  if (ph === 3) { econYear(); return; }
+  if (ph === 4) { landYear(); return; }
+  if (ph === 5) { roadsYear(); modernYear(); return; }
+  if (ph === 6) { if (W.terrDirty || Math.floor(W.tick / TPY) % 3 === 0) { W.terrDirty = false; terrBegin(); } return; }
+  if (ph === 7) { yearHistory(); return; }
+  if (ph === 8) { disastersYear(); canalsYear(); return; }
   // weather wanders: most years are fine, some regions have droughts or floods
   const c = W.climate, drift = W.climateDrift;
   // the weather itself makes the ordinary good and bad years now; this is only the slow swing between wetter and drier decades
@@ -1570,17 +1624,8 @@ function yearlyWorld() {
   }
   herdsYear();
   climateYear();
-  disastersYear();
-  canalsYear();
-  for (const t of W.towns) if (t.alive) cityYear(t);
-  updatePolities();
-  revolutionsYear();
-  for (const pol of W.polities) if (pol.alive && pol.towns > 1) reliefYear(pol);
-  econYear();
-  landYear();
-  roadsYear();
-  modernYear();
-  if (W.terrDirty || Math.floor(W.tick / TPY) % 3 === 0) { W.terrDirty = false; updateTerritory(); }
+}
+function yearHistory() {
   const yr = Math.floor(W.tick / TPY);
   if (yr % 5 === 0) {
     const row = { yr, pop: worldPop(), towns: W.towns.length, cities: W.towns.filter(t => tn(t) >= 220).length, techs: Object.keys(W.firsts).length + TECHS.filter(T => T.start).length, pols: [] };

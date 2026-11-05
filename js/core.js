@@ -126,7 +126,12 @@ const climbCost = (a, b) => climbOf(W.elev[b] - W.elev[a]);
 // How steep the ground is here: the biggest drop to a neighbour.
 function slopeAt(i) {
   const e = W.elev, w = W.w; let m = 0;
-  for (const j of [i - 1, i + 1, i - w, i + w]) { if (j < 0 || j >= e.length || W.water[j]) continue; const d = e[i] - e[j]; const a = d < 0 ? -d : d; if (a > m) m = a; }
+  const water = W.water, n = e.length, ei = e[i];
+  for (let k = 0; k < 4; k++) {  // west, east, north, south: no list to build each call
+    const j = k === 0 ? i - 1 : k === 1 ? i + 1 : k === 2 ? i - w : i + w;
+    if (j < 0 || j >= n || water[j]) continue;
+    const d = ei - e[j], a = d < 0 ? -d : d; if (a > m) m = a;
+  }
   return m;
 }
 // How many people a tile can comfortably have on it, by what's been built there.
@@ -173,7 +178,7 @@ function findPath(a, b, mode0, cls0) {
       if (wa === 0) {
         const oc = occ[ni];
         if (oc === 1) {
-          if (!loose) { const bd = bAt.get(ni); if (bd !== goalB && bd !== startB) continue; c = 12; }
+          if (!loose) { if (goalB === null && startB === null) continue; const bd = bAt.get(ni); if (bd !== goalB && bd !== startB) continue; c = 12; }
           else c = 90;
         } else if (oc === 3) {
           if (!loose && ni !== b) continue;

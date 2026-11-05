@@ -12,9 +12,10 @@ function climateYear() {
   for (const t of W.towns) burn += (t.count.factory || 0) + (t.count.steelworks || 0) * 3 + (t.count.powerplant || 0) * 3 + (t.count.refinery || 0) * 2 - (t.count.windfarm || 0) - (t.count.solarfarm || 0) - (t.count.carbonscrub || 0) * 8;
   C.co2 = Math.max(0, C.co2 + burn * 0.000012 - C.co2 * 0.004);
   const was = C.t;
-  C.t = natural + Math.min(0.16, C.co2) - (C.ash > 0 ? 0.05 : 0);
+  C.t = natural + Math.min(0.16, C.co2) - (C.ash > 0 ? 0.05 : 0) - climateMoods();  // El Nino, long droughts, a little ice age (food.js)
   if (C.t < -0.035 && was >= -0.035 && y - C.note > 120) { C.note = y; chron('misc', 'The winters are getting longer. Glaciers creep down the valleys, and old people say it was never like this.'); }
   if (C.t > 0.09 && was <= 0.09 && y - C.note > 120) { C.note = y; chron('misc', 'The snows retreat up the mountains. The world is warming, and the smoke of the cities is why.'); }
+  natureYear();  // fish stocks, forests, salt, and every town's fields and herds (food.js)
 }
 // One slice of the map each tick, so every tile is looked at a few times a season.
 function snowSweep() {

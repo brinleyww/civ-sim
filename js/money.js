@@ -12,7 +12,7 @@ const JOB_PAY = new Float32Array(J.N).fill(1);
 [[J.FORAGE, 0.6], [J.HUNT, 0.8], [J.FISH, 0.8], [J.FARM, 0.7], [J.HERD, 0.8], [J.WOOD, 0.8], [J.STONE, 0.9], [J.CLAY, 0.8], [J.MINE, 1.2], [J.BUILD, 1.1], [J.CRAFT, 1.4], [J.TRADE, 2.2], [J.SCHOLAR, 1.8], [J.SOLDIER, 1.1], [J.SERVICE, 1.5], [J.SAILOR, 1.1], [J.GARDEN, 0.7], [J.CHILD, 0], [J.ELDER, 0.2], [J.NONE, 0.2]].forEach(([j, v]) => { JOB_PAY[j] = v; });
 
 function newCurrency(pol) {
-  return { name: 'goods', full: 'goods', kind: 0, treasury: 0, debt: 0, cut: 0, reformY: -999, rate: 0.08, tax: 0.1, tariff: 0.05, level: 1, infl: 0, value: 1, supply: 0, metal: 0, debase: 0, gdp: 0, gdpReal: 0, credit: 0, reserve: 0.25, slump: 0, boom: 0, incY: 0, spentY: 0, armyY: 0, buildY: 0, interestY: 0, tradeBal: 0, unpaid: 0, defaulted: -999, bubble: 0, history: [], note: 0 };
+  return { name: 'goods', full: 'goods', kind: 0, treasury: 0, debt: 0, cut: 0, reformY: -999, rate: 0.08, tax: 0.1, tariff: 0.05, level: 1, infl: 0, value: 1, supply: 0, metal: 0, debase: 0, gdp: 0, gdpReal: 0, credit: 0, reserve: 0.25, slump: 0, boom: 0, incY: 0, spentY: 0, armyY: 0, buildY: 0, interestY: 0, tradeBal: 0, unpaid: 0, defaulted: -999, bubble: 0, history: [], note: 0, pot: 0, trend: 0, gap: 0, pcLast: 0, bankCap: 0.08, crisis: 0, crisisY: -999, loans: 0, loansY: 0, lossY: 0, invY: 0, invLast: 0, gdpRealLast: 0, facing: 0, unionAvg: 0, strikes: 0, pacts: {} };
 }
 const hasCoin = pol => pol.cur.kind >= 2;
 const bestMoneyKind = pol => { const K = pol.capital; if (!K) return 0; return K.tech[TECH_IX.digitalmoney] ? 5 : K.tech[TECH_IX.fiatmoney] ? 4 : K.tech[TECH_IX.banknotes] ? 3 : K.tech[TECH_IX.currency] ? 2 : K.tech[TECH_IX.commoditymoney] ? 1 : 0; };
@@ -35,14 +35,26 @@ function moneyReform(pol) {
 }
 
 // ---- town prices: dear when short, cheap when plentiful, and measured in the local money ----
+// The market clears on flows as well as shelves: a stock that ran down over the year means buyers outran sellers, and the price climbs
+// even if something is still left. Made goods can't sell for long below what went into them, and a few big firms add their markup.
 function pricesYear(t) {
-  const P = t.price, lv = t.polity.cur.level;
+  const P = t.price, lv = t.polity.cur.level, e = econOf(t), L = e.last, mk = e.markup;
   for (let r = 0; r < R.N; r++) {
-    const w = wantOf(t, r), s = t.stock[r];
+    const w = wantOf(t, r), s = Math.max(0, t.stock[r]);  // an overdrawn store must not turn the price into NaN
     const scarcity = w > 0 ? clamp(Math.pow((w + 2) / (s + 2), 0.55), 0.3, 6) : clamp(Math.pow(8 / (s + 8), 0.3), 0.4, 1);
     // famine and siege push the price of bread out of reach
     const shock = r === R.FOOD && (t.famine > 1 || t.attack) ? 1.8 : 1;
-    P[r] = P[r] * 0.5 + VALUE[r] * scarcity * lv * shock * 0.5;
+    const flowF = w > 0 ? clamp(1 - (s - L[r]) / (w + s + 8) * 1.2, 0.75, 1.35) : 1;
+    L[r] = s;
+    const ins = ECON_IN[r];
+    let target = VALUE[r] * scarcity * lv * shock * flowF;
+    if (ins) {
+      let floor = 0;
+      for (let q = 0; q < ins.length; q += 2) floor += P[ins[q]] * ins[q + 1];
+      target = Math.max(target * (1 + mk), Math.min(floor * (1.08 + mk), VALUE[r] * lv * 6));
+    }
+    P[r] = P[r] * 0.5 + target * 0.5;
+    if (!(P[r] < Infinity)) P[r] = VALUE[r] * lv;  // heals a price already broken in a save
   }
 }
 // What's owed when goods cross a border or a street: value in the seller's money, tariffs to whoever controls the gate.
@@ -55,7 +67,7 @@ function payForGoods(buyer, seller, r, amount) {
   const can = Math.min(price, buyer.cash);
   buyer.cash -= can;
   if (buyer.polity === seller.polity) { seller.cash += can; return; }
-  const duty = can * curB.tariff;
+  const duty = can * tariffBetween(buyer.polity, seller.polity);
   curB.treasury += duty; curB.incY += duty;
   const got = (can - duty) * fx(buyer.polity, seller.polity);
   seller.cash += got;
@@ -194,28 +206,33 @@ function aidYear() {
 }
 const fmtMoney = v => v >= 1e9 ? (v / 1e9).toFixed(1) + ' billion' : v >= 1e6 ? (v / 1e6).toFixed(1) + ' million' : v >= 1e4 ? Math.round(v / 1000) + ' thousand' : String(Math.round(v));
 // Would this town pay enough for a load to be worth the walk?
-const margin = (from, to, r) => (to.price[r] * to.polity.cur.value) / Math.max(from.price[r] * from.polity.cur.value, 0.01);
+// (the buyer's duty comes off what the seller can hope to make, so a tariff wall really does cut trade)
+const margin = (from, to, r) => (to.price[r] * to.polity.cur.value) * (from.polity === to.polity ? 1 : 1 - tariffBetween(to.polity, from.polity)) / Math.max(from.price[r] * from.polity.cur.value, 0.01);
 
 // ---- a town's year: what it made, what its workers earned, what got taxed, who ended up with it ----
 function econTown(t) {
-  const cur = t.polity.cur, n = tn(t);
+  const cur = t.polity.cur, n = tn(t), e = econOf(t);
   pricesYear(t);
   const out = t.outVal;
   t.outVal = 0;
-  // services are worth something too, and a slump leaves people without work
+  firmsYear(t, e, cur, n);
+  // services are worth something too, and a slump leaves people without work; a strike shuts the works for part of the year
   const svc = (t.jobs[J.SCHOLAR] + t.jobs[J.SERVICE] + t.jobs[J.TRADE]) * t.scale * 6;
-  const real = (out + svc) * (1 - cur.slump * 0.35) * (1 + cur.boom * 0.1) * (1 - (t.unemp || 0) * 0.6);
+  const real = (out + svc) * (1 - cur.slump * 0.35) * (1 + cur.boom * 0.1) * (1 - (t.unemp || 0) * 0.6) * (e.strike ? 1 - 0.22 * e.union : 1);
   t.gdpReal = real;
   cur.gdpReal += real;
+  capitalYear(t, e, cur, real);
+  e.migInShow = e.migIn; e.migIn = 0;
   if (cur.kind < 2) { t.gdp = real; t.wage = real / Math.max(n, 1); return; }
   const nominal = real * cur.level;
   t.gdp = nominal;
   cur.gdp += nominal;
-  // who gets it: wages, then profit, then rent. More unequal the older and more feudal the place, less so with unions and welfare.
-  const lab = clamp(0.62 + (t.count.union ? 0.08 : 0) + (t.tech[TECH_IX.welfare] ? 0.06 : 0) - t.gini * 0.3, 0.3, 0.8);
+  // who gets it: wages, profit and rent, settled by bargaining, market power and who owns the land
+  sharesYear(t, e, n);
   const workers = Math.max(1, (t.members.length - t.jobs[J.CHILD] - t.jobs[J.ELDER]) * t.scale * (1 - (t.unemp || 0)));
-  t.wage = nominal * lab / workers;
-  t.realWage = t.wage / Math.max(t.price[R.FOOD], 0.05);
+  t.wage = nominal * e.ls / workers;
+  // and the rent comes out of the pay packet before the bread does
+  t.realWage = t.wage * (1 - Math.min(0.35, e.rs * 1.2)) / Math.max(t.price[R.FOOD], 0.05);
   // tax, as well as the realm can collect it
   const order = clamp(0.5 + t.mod.order * 0.01 + t.mod.admin * 0.002, 0.3, 1);
   const rate = cur.tax * (t.tech[TECH_IX.incometax] ? 1.15 : 1) * order * (t.occupier ? 0.2 : 1);
@@ -224,13 +241,17 @@ function econTown(t) {
   const paid = Math.min(tax, t.cash * 0.6);
   t.cash -= paid;
   cur.treasury += paid; cur.incY += paid;
+  // state-owned works hand their profits to the treasury
+  if (e.state > 0.02) { const sp = Math.min(nominal * e.ks * e.state * 0.5, t.cash * 0.1); if (sp > 0) { t.cash -= sp; cur.treasury += sp; cur.incY += sp; } }
   cur.supply += t.cash;
   remittances(t);
-  // inequality creeps up with trade and cities; heavy tax and revolts bring it down
-  const pull = 0.3 + Math.min(0.3, t.jobs[J.TRADE] * t.scale / Math.max(n, 1) * 3) + (n > 1000 ? 0.1 : 0) + (GOV[t.polity.gov].st <= 3 ? 0.05 : 0) - (t.tech[TECH_IX.welfare] ? 0.14 : 0) - cur.tax * 0.4;
-  t.gini = clamp(t.gini + (pull - t.gini) * 0.03 - (t.unrest > 50 ? 0.01 : 0), 0.22, 0.75);
-  // too much money at the top is its own kind of unrest
-  t.unrest = Math.max(0, t.unrest + Math.max(0, t.gini - 0.55) * 8 + cur.slump * 6 + Math.min(20, Math.max(0, cur.infl - 0.1) * 30) + Math.max(0, cur.tax - 0.2) * 40);
+  // inequality comes out of who earns what and who saves it; heavy tax and revolts bring it down a little
+  classesYear(t, e, cur, nominal);
+  if (cur.tax > 0.2 || t.unrest > 50) t.gini = Math.max(0.22, t.gini - (cur.tax > 0.2 ? (cur.tax - 0.2) * 0.1 : 0) - (t.unrest > 50 ? 0.01 : 0));
+  creditTown(t, e, cur);
+  // too much money at the top is its own kind of unrest, and so is a rent nobody can pay
+  t.unrest = Math.max(0, t.unrest + Math.max(0, t.gini - 0.55) * 8 + cur.slump * 6 + Math.min(20, Math.max(0, cur.infl - 0.1) * 30) + Math.max(0, cur.tax - 0.2) * 40 + Math.max(0, e.rs - 0.16) * 25 + (e.strike ? 3 : 0));
+  e.rwLast = t.realWage;
 }
 // ---- a realm's year: pay the bills, and if they can't be paid, find a way. Every way costs something later. ----
 function econRealm(pol) {
@@ -241,6 +262,7 @@ function econRealm(pol) {
   cur.history.push(Math.round(cur.level * 100) / 100);
   if (cur.history.length > 200) cur.history.shift();
   if (K < 2) { cur.gdpLast = cur.gdpReal; cur.gdpReal = 0; cur.gdp = 0; return; }
+  cycleYear(pol, cur);
   // the bills
   const soldiers = pol.soldiers * cap0.scale + W.armies.reduce((s, a) => s + (a.pol === pol ? a.soldiers.length : 0), 0);
   const wageNow = Math.max(0.5, cap0.wage || 2);
@@ -343,7 +365,7 @@ function econRealm(pol) {
   const atWarNow = Object.keys(pol.warsWith).length > 0, warTax = atWarNow && pol.support > 35 ? 0.06 : 0;
   const max = (K >= 4 ? 0.42 : K === 3 ? 0.28 : 0.2) + warTax;
   cur.tax = clamp(cur.tax + (short > 1.1 ? 0.012 : short < 0.7 ? -0.008 : 0) + greedy * 0.05 + (warTax && short > 0.9 ? 0.01 : 0), 0.03, max);
-  cur.tariff = clamp(0.05 + (pol.nodes.includes('com2') ? -0.03 : 0) + (cur.tradeBal < 0 ? 0.04 : 0), 0, 0.3);
+  tariffPolicy(pol, cur, cap0);
   // central bank
   if (!cur.cb && cap0.tech[TECH_IX.centralbank]) { cur.cb = true; if (tn(cap0) > 80) chronT('misc', `${pol.name} founds a central bank, and hands it the job of worrying about prices.`, cap0); }
   // hyperinflation: past a point, nobody holds money at all
@@ -355,6 +377,7 @@ function econRealm(pol) {
   else if (K <= 3 && cur.level > 6 && sinceReform > 40 && rnd() < 0.25) newMoney(pol);
   else if (cur.debase > 0.7 && K >= 2 && sinceReform > 40 && rnd() < 0.08) newMoney(pol);
   creditCycle(pol, cap0);
+  banksYear(pol, cur, cap0);
   cur.gdpLast = cur.gdp; cur.gdp = 0; cur.gdpReal = 0; cur.supply = 0; cur.incY = 0; cur.spentY = 0;
 }
 // A new coin to replace the wreck of the old one. It wipes out savers, and it's the only thing that ends it.
@@ -398,6 +421,7 @@ function creditCycle(pol, cap0) {
   }
 }
 function econYear() {
+  tradeTiesYear();
   for (const pol of W.polities) if (pol.alive && pol.towns) econRealm(pol);
   loansYear();
   aidYear();
@@ -432,3 +456,284 @@ function personMoney(p) {
 }
 // Rich or poor, compared with everyone else in town.
 const wealthWord = p => { const w = (p.town.wage || 1) * 2, v = p.cash / Math.max(w, 0.01); return v > 10 ? 'Wealthy' : v > 3 ? 'Comfortable' : v > 0.8 ? 'Getting by' : 'Poor'; };
+
+// ======== firms, capital, classes, credit, unions, rent, trade treaties ========
+// Everything here moves money between people who already hold it (owners and savers, towns and treasuries) or turns goods into
+// machines and buildings: none of it makes cash from nothing. A town's economy lives in t.ec, plain numbers only.
+const ekn = (t, id) => TECH_IX[id] !== undefined && t.tech[TECH_IX[id]] === 1;
+// What goes into each made thing, per unit, from the cheapest recipe the world knows: [input, qty, input, qty...]
+const ECON_IN = (() => {
+  const best = new Array(R.N).fill(null), cost = new Float32Array(R.N).fill(1e9);
+  for (const b in RECIPES) for (const rec of RECIPES[b]) {
+    let inC = 0, outV = 0;
+    for (const k in rec.in) inC += rec.in[k] * VALUE[+k];
+    for (const k in rec.out) outV += rec.out[k] * VALUE[+k];
+    if (!(outV > 0) || !(inC > 0)) continue;
+    for (const k in rec.out) {
+      const r = +k, q = rec.out[k], c = inC * (q * VALUE[r] / outV) / q;
+      if (q > 0 && c < cost[r]) {
+        cost[r] = c;
+        // each input's share of this output, by value
+        const L = []; for (const i in rec.in) L.push(+i, rec.in[i] * (q * VALUE[r] / outV) / q);
+        best[r] = L;
+      }
+    }
+  }
+  return best;
+})();
+// How much capital a unit of output needs, by the methods the town knows: a plough and a barn, then a mill, then a factory floor.
+const kyOf = t => 0.6 + (ekn(t, 'wheel') ? 0.2 : 0) + (ekn(t, 'iron') ? 0.2 : 0) + (ekn(t, 'watermill') ? 0.2 : 0) + (ekn(t, 'steam') ? 0.5 : 0) + (ekn(t, 'factory') ? 0.5 : 0) + (ekn(t, 'railway') ? 0.3 : 0) + (ekn(t, 'electric') ? 0.4 : 0) + (ekn(t, 'massprod') ? 0.4 : 0) + (ekn(t, 'computers') ? 0.3 : 0);
+function newEcon(t) {
+  const real = t.gdpReal > 0 ? t.gdpReal : tn(t) * 3;
+  return { K: real * kyOf(t) * 0.9, Ys: real, kq: 1, inv: 0, prof: 0.12, loans: 0, npl: 0, union: 0, barg: 0, strike: 0, strikeY: -99, noteY: -99,
+    rs: 0.06, ls: 0.55, ks: 0.39, state: 0.03, firms: 1, fsize: 3, conc: 0.3, markup: 0.05, ltu: 0, rwLast: 0, migIn: 0, migInShow: 0, migOut: 0, wgini: 0.5,
+    pc: Float32Array.of(0.8, 0.1, 0.07, 0.03), sh: Float32Array.of(0.45, 0.1, 0.35, 0.1), wl: Float32Array.of(0.25, 0.15, 0.4, 0.2), last: Float32Array.from(t.stock) };
+}
+const econOf = t => t.ec || (t.ec = newEcon(t));
+const LANDED = { chiefdom: 1, kingdom: 1, feudal: 1, theocracy: 1, despotism: 1, empire: 1, absolute: 1, oligarchy: 1 };
+const REPRESSIVE = { despotism: 1, absolute: 1, junta: 1, corporate: 1, empire: 1 };
+// the biggest firm the times allow: a family bench, a guild shop, a merchant house, a mill, a company, a corporation
+const FIRM_ERA = [['guilds', 8], ['merchanthouse', 12], ['commenda', 16], ['factory', 60], ['limitedliability', 160], ['massprod', 400], ['corporations', 900], ['computers', 1400]];
+const OWN_WORD = ['family workshops', 'guild shops', 'merchant houses', 'mills and manufactories', 'joint-stock companies', 'corporations', 'state works'];
+function firmsYear(t, e, cur, n) {
+  const sc = t.scale, Jb = t.jobs, gid = GOV[t.polity.gov].id;
+  const hired = (Jb[J.CRAFT] + Jb[J.TRADE] + Jb[J.SERVICE] + Jb[J.BUILD] + Jb[J.MINE]) * sc;
+  let big = 4; for (const [id, s] of FIRM_ERA) if (ekn(t, id)) big = s;
+  e.fsize = Math.max(2, Math.min(big, 3 + hired * 0.06));
+  e.firms = Math.max(1, hired / e.fsize);
+  // a few big houses set their own prices; guilds keep outsiders out, and competition law breaks the giants up
+  e.conc = clamp(1.4 / Math.sqrt(e.firms + 1) + (ekn(t, 'guilds') && !ekn(t, 'factory') ? 0.12 : 0) + (gid === 'corporate' || gid === 'oligarchy' ? 0.1 : 0) - (ekn(t, 'antitrust') ? 0.15 : 0), 0.03, 0.85);
+  e.markup = e.conc * 0.3;
+  const st = gid === 'socialist' ? 0.65 : gid === 'technocracy' ? 0.2 : gid === 'junta' || gid === 'despotism' ? 0.15 : ekn(t, 'planning') ? 0.12 : 0.03;
+  e.state += (st - e.state) * 0.1;
+  // unions: the mills and mines organise, a hungry labour market makes them bold, a big queue at the gate makes them meek
+  const ind = Math.min(1, (Jb[J.CRAFT] + Jb[J.MINE] + Jb[J.BUILD]) * sc / Math.max(n * 0.5, 1)), repress = REPRESSIVE[gid] ? 0.35 : 1;
+  let ut = 0;
+  if (ekn(t, 'unions')) ut = (0.06 + (t.count.union || 0) * 0.05 + ind * 0.45 + Math.max(0, t.gini - 0.4) * 0.6 - (t.unemp || 0) * 0.8) * repress;
+  else if (ekn(t, 'guilds')) ut = 0.03 + ind * 0.2;
+  if (gid === 'socialist') ut = Math.max(ut, 0.5);
+  e.union += (clamp(ut, 0, 0.75) - e.union) * 0.12;
+  e.barg *= 0.9; e.strike = 0;
+  // a strike: pay falling behind prices, or owners taking a growing share, and organised workers walk out
+  const yr = year();
+  if (cur.kind >= 2 && e.union > 0.08 && gid !== 'socialist' && yr - e.strikeY > 3) {
+    const fall = e.rwLast > 0 ? Math.max(0, 1 - t.realWage / e.rwLast) : 0;
+    const squeeze = fall * 4 + Math.max(0, cur.infl - 0.04) * 3 + Math.max(0, e.ks - 0.36) * 2 + (cur.boom > 0.4 ? 0.08 : 0);
+    if (rnd() < e.union * squeeze * 0.7) {
+      e.strike = 1; e.strikeY = yr; cur.strikes = (cur.strikes || 0) + 1;
+      if (repress < 1) { t.unrest += 10; e.union *= 0.7; } else { e.barg = Math.min(0.12, e.barg + 0.025 * (1 + e.union)); t.unrest += 3; }
+      if (n > 400 && yr - e.noteY > 25) {
+        e.noteY = yr;
+        chronT('misc', repress < 1 ? `Strikers in ${t.name} are met with soldiers. The works reopen; the anger doesn't go away.` : `${t.name} downs tools: ${Math.round(e.union * 100)}% of its workers are in a union, and they want their pay to keep up with prices.`, t);
+      }
+    }
+  }
+}
+// Machines and buildings: they wear out, and firms replace and add to them when the profit beats the interest.
+// They're built out of the town's own timber, stone, brick, tools and steel, so industry pulls on the supply chain.
+const INV_MAT = [[R.WOOD, 0.14], [R.STONE, 0.08], [R.BRICK, 0.1], [R.TOOLS, 0.2], [R.STEEL, 0.12]];
+function capitalYear(t, e, cur, real) {
+  if (t.nomad || !(real > 0)) return;
+  // firms plan on what the town usually makes, not on one lucky or unlucky year
+  e.Ys = e.Ys > 0 ? e.Ys * 0.75 + real * 0.25 : real;
+  const Kdes = Math.max(1, e.Ys * kyOf(t)), money = cur.kind >= 2, crisis = cur.crisis > 0;
+  e.K *= 1 - (0.045 + (t.attack ? 0.08 : 0) + (t.unrest > 60 ? 0.02 : 0));
+  e.prof = e.ks * e.Ys / Math.max(e.K, 1);
+  const hurdle = (money ? cur.rate : 0.07) + 0.025 + (crisis ? 0.06 : 0);
+  // the accelerator: a growing economy wants more capacity, a shrinking one wants none
+  const mood = clamp(1 + (cur.boom || 0) * 0.5 - (cur.slump || 0) * 0.7 + (cur.gap || 0) * 2, 0.15, 1.8);
+  let want = Math.max(0, Kdes - e.K) * 0.22 * clamp(0.6 + (e.prof - hurdle) * 6, 0.1, 1.6) * mood;
+  const S = e.sh, save = real * (S[2] * 0.35 + S[3] * 0.2 + S[1] * 0.08 + S[0] * 0.03);
+  const lend = money && cur.kind >= 3 && !crisis && ekn(t, 'banking') ? real * clamp(0.04 + (cur.credit || 0) * 0.15, 0, 0.12) * clamp((cur.bankCap || 0.08) / 0.08, 0.2, 1.2) : 0;
+  want = Math.min(want, save + lend + real * e.state * 0.06, real * 0.15);
+  let inv = 0;
+  if (want > 0.5) {
+    let need = 0, got = 0;
+    for (const [r, s] of INV_MAT) {
+      const w = wantOf(t, r);
+      if (w <= 0) continue;
+      const q = want * s / VALUE[r], take = Math.min(q, Math.max(0, t.stock[r] - w * 0.5), t.stock[r] * 0.2);
+      if (take > 0) t.stock[r] -= take;
+      need += q * VALUE[r]; got += take * VALUE[r];
+    }
+    inv = want * (0.35 + 0.65 * (need > 0 ? got / need : 1));
+    e.K += inv;
+    if (lend > 0) e.loans += Math.min(lend, Math.max(0, inv - save * 0.5)) * cur.level;
+  }
+  e.inv = inv;
+  cur.invY = (cur.invY || 0) + inv;
+  e.kq = clamp(0.78 + 0.22 * Math.min(e.K / Kdes, 1.5), 0.78, 1.11) * (1 - e.state * 0.06);
+}
+function sharesYear(t, e, n) {
+  const gid = GOV[t.polity.gov].id;
+  // rent: dear land at the centre of a big town, a landed nobility, crowding, and none of it in a socialist state
+  e.rs = clamp(0.025 + 0.012 * Math.log1p(n / 150) + (LANDED[gid] ? 0.07 : 0) + Math.max(0, (t.crowd || 0) - 0.9) * 0.1 + (W.land ? Math.min(0.05, landAt(t.i) * 0.0003) : 0) - (gid === 'socialist' ? 0.05 : 0), 0.02, 0.3);
+  // labour's share: unions and a tight labour market push it up, market power and a queue at the gate push it down
+  const tight = clamp(0.07 - (t.unemp || 0), -0.25, 0.07);
+  const ls = 0.5 + e.union * 0.16 + e.barg + tight * 0.8 + (t.tech[TECH_IX.welfare] ? 0.03 : 0) + (gid === 'socialist' ? 0.08 : 0) - e.markup * 0.3;
+  e.ls = clamp(Math.min(ls, 1 - e.rs - 0.08), 0.3, 0.8);
+  e.ks = 1 - e.ls - e.rs;
+}
+// Lorenz curve over a few groups: pop and share both sum to 1.
+function giniOf(pop, share) {
+  const ix = [0, 1, 2, 3].sort((a, b) => share[a] / Math.max(pop[a], 1e-6) - share[b] / Math.max(pop[b], 1e-6));
+  let cs = 0, area = 0;
+  for (const i of ix) { area += pop[i] * (cs * 2 + share[i]); cs += share[i]; }
+  return clamp(1 - area, 0, 1);
+}
+const SAVE_RATE = [0.03, 0.1, 0.35, 0.25];
+// Four classes: labourers, the schooled trades, owners of firms, landlords. What each earns, what each keeps, and how unequal that makes the town.
+function classesYear(t, e, cur, nominal) {
+  let sk = 0, skN = 0, all = 0, allN = 0;
+  if (t.occN && t.occPay) for (let k = 0; k < t.occN.length; k++) { const m = t.occN[k]; if (m <= 0) continue; const v = m * t.occPay[k]; all += v; allN += m; if (OCCS[k].edu >= 2) { sk += v; skN += m; } }
+  const gid = GOV[t.polity.gov].id, C = e.pc, S = e.sh, Wl = e.wl;
+  const pl = LANDED[gid] ? 0.035 : 0.015;
+  // shares spread ownership wider: a company has many owners, a pension fund more
+  const po = clamp(0.4 / e.fsize + (ekn(t, 'limitedliability') ? 0.02 : 0) + (ekn(t, 'pensions') ? 0.03 : 0), 0.008, 0.12) * (1 - e.state * 0.7);
+  const wf = 1 - pl - po, ps = wf * (allN > 0 ? skN / allN : 0.1);
+  C[0] = wf - ps; C[1] = ps; C[2] = po; C[3] = pl;
+  const skS = (all > 0 ? sk / all : 0.15) * (1 - e.union * 0.15);
+  // the state's own profits come back as public spending, shared by headcount among the workers
+  const pub = e.ks * e.state;
+  S[0] = e.ls * (1 - skS) + pub * (C[0] / wf); S[1] = e.ls * skS + pub * (C[1] / wf); S[2] = e.ks - pub; S[3] = e.rs;
+  // savings: everyone keeps a little, owners and landlords a lot; borrowers' interest goes to whoever has savings in the bank
+  const cash = Math.max(t.cash, 1);
+  let tot = 0;
+  for (let c = 0; c < 4; c++) { Wl[c] = Wl[c] * cash + Math.max(0, S[c]) * nominal * SAVE_RATE[c]; }
+  const intr = Math.min(e.loans * (cur.rate + 0.02), Wl[2] * 0.3);
+  if (intr > 0) { Wl[2] -= intr; Wl[0] += intr * 0.25; Wl[1] += intr * 0.4; Wl[3] += intr * 0.35; }
+  for (let c = 0; c < 4; c++) tot += Wl[c];
+  for (let c = 0; c < 4; c++) Wl[c] = Wl[c] / Math.max(tot, 1e-6);
+  // between the classes, plus the spread within each
+  const g = giniOf(C, S);
+  t.gini = clamp(t.gini + (clamp(g + (1 - g) * 0.12, 0.22, 0.75) - t.gini) * 0.15, 0.22, 0.75);
+  e.wgini = giniOf(C, Wl);
+}
+// Bank loans in a town: some go bad in a slump, more when prices fall and old debts grow heavier in real terms.
+function creditTown(t, e, cur) {
+  if (!(e.loans > 0)) { e.npl = 0; return; }
+  e.npl = clamp(0.015 + (cur.slump || 0) * 0.12 + Math.max(0, -cur.infl - 0.02) * 0.8 + Math.max(0, (t.unemp || 0) - 0.08) * 0.4 + (e.prof < cur.rate ? 0.03 : 0) + (t.attack ? 0.1 : 0), 0, 0.5);
+  const loss = e.loans * e.npl * 0.35;
+  cur.loansY = (cur.loansY || 0) + e.loans; cur.lossY = (cur.lossY || 0) + loss;
+  e.loans = Math.max(0, e.loans * 0.9 - loss);
+}
+// The banks' cushion, and what happens when it's gone.
+function banksYear(pol, cur, cap0) {
+  if (cur.bankCap === undefined) { cur.bankCap = 0.08; cur.crisis = 0; cur.strikes = 0; }
+  if (cur.crisis > 0) cur.crisis--;
+  const L = cur.loansY || 0, loss = cur.lossY || 0;
+  cur.loans = L; cur.loansY = 0; cur.lossY = 0;
+  cur.invLast = cur.invY || 0; cur.invY = 0; cur.gdpRealLast = cur.gdpReal;
+  let un = 0, nn = 0;
+  for (const t of W.towns) if (t.polity === pol && t.ec) { const m = tn(t); un += t.ec.union * m; nn += m; }
+  cur.unionAvg = nn ? un / nn : 0;
+  if (L <= 1) return;
+  // the spread between what borrowers pay and savers get builds the cushion; bad loans and a lending spree eat it
+  cur.bankCap = clamp(cur.bankCap + 0.022 - loss / L - (cur.credit || 0) * 0.01, -0.3, 0.14);
+  if (cur.bankCap >= 0.02 || L < (cur.gdp || 0) * 0.1 || year() - (cur.crisisY || -999) < 10) return;
+  // a banking crisis: credit stops, firms can't roll their loans, and the slump deepens
+  cur.crisis = 4; cur.crisisY = year(); cur.slump = Math.min(1, (cur.slump || 0) + 0.45); cur.credit *= 0.4;
+  const mine = W.towns.filter(t => t.polity === pol && t.ec && t.ec.loans > 0);
+  const bail = cur.cb ? Math.min(Math.max(cur.treasury, 0) * 0.5, L * 0.08) : 0;
+  if (bail > 0) {
+    // the central bank stands behind the banks: the treasury's money goes to the towns that hold the loans
+    cur.treasury -= bail; cur.spentY += bail;
+    for (const t of mine) t.cash += bail * t.ec.loans / L;
+    cur.bankCap += bail / L + 0.03;
+    if (tn(cap0) > 60) chronT('collapse', `The banks of ${pol.name} are bust. The central bank stands behind them with ${fmtMoney(bail)} ${cur.name}s, and the queues go home.`, cap0);
+  } else {
+    // no lender of last resort: depositors lose their savings, and the debts are written down
+    for (const t of mine) { const W0 = t.ec.wl; W0[0] *= 0.8; W0[1] *= 0.8; const s = W0[0] + W0[1] + W0[2] + W0[3]; for (let c = 0; c < 4; c++) W0[c] /= s; t.ec.loans *= 0.7; t.unrest += 8; }
+    cur.bankCap = 0.06; pol.stab -= 6;
+    if (tn(cap0) > 60) chronT('collapse', `Bank after bank shuts its doors in ${pol.name}. Savers lose everything, and the works that lived on credit close.`, cap0);
+  }
+}
+// Output against its trend: the business cycle as people feel it, per head so that a conquest isn't a boom.
+function cycleYear(pol, cur) {
+  // (a harvest is lumpy, so the year's figure is smoothed a little before it's compared)
+  const raw = cur.gdpReal / Math.max(pol.pop || 1, 1);
+  if (!(cur.pot > 0) || !(cur.pcLast > 0)) { cur.pot = raw; cur.pcLast = raw; cur.gap = 0; return; }
+  const pc = cur.pcLast * 0.5 + raw * 0.5;
+  cur.trend = (cur.trend || 0) * 0.9 + clamp(pc / cur.pcLast - 1, -0.2, 0.2) * 0.1;
+  cur.pot = cur.pot * (1 + cur.trend) * 0.88 + pc * 0.12;
+  cur.gap = clamp(pc / Math.max(cur.pot, 1e-6) - 1, -0.25, 0.25);
+  cur.pcLast = pc;
+  // an economy running well above its trend overheats: credit grows faster, and the fall is harder
+  if (cur.gap > 0.08) cur.credit = (cur.credit || 0) + 0.01;
+}
+// What a realm's duties are against another's goods: nothing under a trade treaty.
+const tariffBetween = (a, b) => a === b ? 0 : a.cur.pacts && a.cur.pacts[b.id] ? 0 : a.cur.tariff;
+// Tariffs: a mercantilist court protects its workshops, a slump brings tariff walls (that make it worse), and a realm whose
+// goods are taxed abroad answers in kind.
+function tariffPolicy(pol, cur, cap0) {
+  const prot = 0.04 + (ekn(cap0, 'mercantilism') && !ekn(cap0, 'freezones') ? 0.06 : 0) + (cur.tradeBal < 0 ? 0.04 : 0) + (cur.slump || 0) * 0.08
+    + Math.max(0, (cur.facing || 0) - cur.tariff) * 0.6 - (pol.nodes.includes('com2') ? 0.03 : 0) - (ekn(cap0, 'freezones') ? 0.03 : 0) - (GOV[pol.gov].id === 'corporate' ? 0.02 : 0);
+  cur.tariff = clamp(cur.tariff + (clamp(prot, 0, 0.4) - cur.tariff) * 0.3, 0, 0.4);
+}
+// Trade ties, once a year from last year's ledger: slumps spread down the trade routes, realms learn what duties their goods face,
+// and good partners sign treaties to trade free of duty (which keeps them friendly).
+function tradeTiesYear() {
+  const F = W.flowsLast;
+  if (!F) return;
+  const imp = {}, fT = {}, fW = {}, yr = year();
+  for (const key in F) {
+    const f = F[key];
+    if (!(f.trade > 0)) continue;
+    const a = W.polities[f.from], b = W.polities[f.to];
+    if (!a || !b || !a.alive || !b.alive || a.cur.kind < 2 || b.cur.kind < 2) continue;
+    const ga = Math.max((a.cur.gdpLast || 0) * a.cur.value, 1), gb = Math.max((b.cur.gdpLast || 0) * b.cur.value, 1);
+    const wa = Math.min(0.5, f.trade / ga), wb = Math.min(0.5, f.trade / gb);
+    imp[a.id] = (imp[a.id] || 0) + wa * (b.cur.slump || 0);
+    imp[b.id] = (imp[b.id] || 0) + wb * (a.cur.slump || 0);
+    // b sold to a: b's goods pay a's duty
+    fT[b.id] = (fT[b.id] || 0) + f.trade * tariffBetween(a, b); fW[b.id] = (fW[b.id] || 0) + f.trade;
+    const pa = a.cur.pacts || (a.cur.pacts = {}), pb = b.cur.pacts || (b.cur.pacts = {});
+    if (!pa[b.id] && wa > 0.01 && wb > 0.01 && !atWar(a, b) && relOf(a, b) > 25 && rnd() < 0.06) {
+      pa[b.id] = Math.floor(yr); pb[a.id] = Math.floor(yr);
+      if (a.capital) chronT('gov', `${a.name} and ${b.name} sign a trade treaty: their goods cross the border free of duty.`, a.capital);
+    }
+  }
+  for (const id in imp) { const c = W.polities[+id].cur; c.slump = Math.min(1, (c.slump || 0) + imp[id] * 0.3); }
+  for (const pol of W.polities) {
+    if (!pol.alive || pol.cur.kind < 2) continue;
+    const c = pol.cur;
+    c.facing = fW[pol.id] ? fT[pol.id] / fW[pol.id] : c.facing * 0.8;
+    const P = c.pacts || (c.pacts = {});
+    for (const k in P) {
+      const o = W.polities[+k];
+      if (!o || !o.alive) { delete P[k]; continue; }
+      if (atWar(pol, o) || relOf(pol, o) < -10) {
+        delete P[k]; if (o.cur.pacts) delete o.cur.pacts[pol.id];
+        if (pol.capital) chronT('gov', `The trade treaty between ${pol.name} and ${o.name} is torn up, and the customs posts go back up.`, pol.capital);
+      } else if (pol.id < o.id) adjustRel(pol, o, 1);
+    }
+  }
+}
+// Extra unemployment from the labour market's side: a slump below trend, union wages above the going rate, and the long-term
+// jobless who find it ever harder to get back in; investment and building take some up.
+function econUnemp(t) {
+  const e = t.ec, cur = t.polity.cur;
+  if (!e) return 0;
+  e.ltu = e.ltu * 0.8 + Math.max(0, (t.unemp || 0) - 0.06) * 0.2;
+  return Math.max(0, -(cur.gap || 0)) * 0.25 + e.union * 0.025 + e.ltu * 0.25 - Math.min(0.03, e.inv / Math.max(t.gdpReal, 1) * 0.25) + (e.strike ? 0.02 : 0);
+}
+// The panel: firms, capital, credit, unions, rent, classes for a town; cycle, banks and treaties for a realm. (UI only.)
+function econMoreHTML(x) {
+  const pc = v => Math.round(v * 100) + '%';
+  if (x.cur) {
+    const c = x.cur;
+    if (c.kind < 2) return '';
+    const d = Math.max(c.gdpLast || 1, 1), g = c.gap || 0;
+    const pacts = Object.keys(c.pacts || {}).map(id => W.polities[+id]).filter(o => o && o.alive);
+    return `<div class="kv"><span>Business cycle</span><b>${g > 0.04 ? 'Above trend' : g < -0.04 ? 'Below trend' : 'On trend'} (${g >= 0 ? '+' : ''}${(g * 100).toFixed(1)}%)</b><span>Investment</span><b>${pc((c.invLast || 0) / Math.max(c.gdpRealLast || 1, 1))} of output</b><span>Bank loans</span><b>${pc((c.loans || 0) / d)} of output</b><span>Banks' cushion</span><b>${pc(c.bankCap === undefined ? 0.08 : c.bankCap)}${c.crisis > 0 ? ' · in crisis' : ''}</b><span>In a union</span><b>${pc(c.unionAvg || 0)}</b><span>Duty faced abroad</span><b>${pc(c.facing || 0)}</b></div>
+    ${pacts.length ? `<div class="sub">Trades duty-free with ${pacts.slice(0, 5).map(o => esc(o.name)).join(', ')}${pacts.length > 5 ? ` and ${pacts.length - 5} more` : ''}.</div>` : ''}`;
+  }
+  const t = x, e = t.ec;
+  if (!e || t.polity.cur.kind < 2) return '';
+  const own = e.state > 0.4 ? 6 : Math.min(5, FIRM_ERA.reduce((s, [id, z], k) => ekn(t, id) ? [1, 2, 2, 3, 4, 4, 5, 5][k] : s, 0));
+  const S = e.sh, C = e.pc, Wl = e.wl, Kd = Math.max(1, (t.gdpReal || 1) * kyOf(t));
+  const cls = ['Labourers', 'Schooled trades', 'Owners', 'Landlords'], col = ['#c8a45a', '#8cc66a', '#6ab0e0', '#c27ad0'];
+  return `<div class="kv"><span>Firms</span><b>${fmt(Math.round(e.firms))} ${OWN_WORD[own]}</b><span>Hands per firm</span><b>~${Math.round(e.fsize)}</b><span>Market power</span><b>${e.conc > 0.45 ? 'Few sellers' : e.conc > 0.2 ? 'Some big ones' : 'Competitive'}, +${pc(e.markup)}</b><span>Capital vs need</span><b>${pc(e.K / Kd)}</b><span>Invested</span><b>${pc(e.inv / Math.max(t.gdpReal || 1, 1))} of output</b><span>Profit rate</span><b>${(e.prof * 100).toFixed(1)}%</b>${e.state > 0.05 ? `<span>Owned by the state</span><b>${pc(e.state)}</b>` : ''}<span>Bank loans</span><b>${fmt(e.loans)}${e.npl > 0.04 ? `, ${pc(e.npl)} bad` : ''}</b><span>In a union</span><b>${pc(e.union)}${e.strike ? ' · on strike' : ''}</b><span>Land rent</span><b>${pc(e.rs)} of income</b>${e.migOut || e.migInShow ? `<span>Moved for work</span><b>${fmt(Math.round(e.migOut))} out, ${fmt(Math.round(e.migInShow))} in</b>` : ''}</div>
+  <div class="sub">Each class: share of people, then of income / wealth.</div>
+  ${cls.map((n, c) => bar(`${n} ${pc(C[c])}`, S[c], 1, col[c], `${pc(S[c])} / ${pc(Wl[c])}`)).join('')}`;
+}

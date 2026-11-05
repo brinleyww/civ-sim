@@ -246,6 +246,7 @@ function launchShip(t, q) {
   const s = {
     id: W.nextId++, kind: q.kind, type: q.type, home: t, pol: t.polity, at, nx: at, frac: 0, path: null, pi: 0, state: 0, wait: W.tick + 20 + rint(60),
     hp: D.hp, cargo: new Float32Array(R.N), load: 0, dest: null, mission: q.kind === 'war' ? 'guard' : 'trade', pass: [], doom: -1, name: `${pick(SHIP_NAMES_A)} ${pick(SHIP_NAMES_B)}`, voyages: 0, built: Math.floor(year()), dir: 1, wake: 0, cool: 0, onDone: null, block: 0,
+    leg: undefined, hph: undefined, hTown: undefined, mvA: undefined, mvT: undefined, berth: undefined, lighter: undefined, hStart: undefined, hDone: undefined, army: undefined, landing: undefined, landTile: undefined, ready: undefined, expect: undefined,  // filled in later; declared so every ship has the same shape
   };
   t.ships.push(s); W.ships.push(s);
   if (!W.firstShip && q.kind === 'trade') { W.firstShip = true; chronT('tech', `The first trading vessel, the ${s.name}, slides off the slip at ${t.name}.`, t); }

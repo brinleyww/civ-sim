@@ -5,12 +5,13 @@ const SPR_PX = 12;
 const ROOFS = [['#a8552f', '#c56c3f', '#7f3e22'], ['#47606e', '#5d7a8a', '#34474f'], ['#4d7d5a', '#669c74', '#3a5e44'], ['#8c3b3b', '#a95050', '#672b2b']];
 const spriteCache = new Map();
 
-function mkSprite(w, h, fn) {
+function mkSprite(w, h, fn, post) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const g = c.getContext('2d');
   const r = (x, y, a, b, col) => { g.fillStyle = col; g.fillRect(x, y, a, b); };
   fn(r, g, w, h);
+  if (post) post(g, w, h);
   return refine(c);
 }
 // Doubles the art, keeps its hard pixel edges, and adds soft light from the upper left plus a thin dark outline so buildings sit on the land.
@@ -74,7 +75,8 @@ function windows(r, x, y, w, rows, cols, col, sy) {
   const gx = Math.floor(w / cols);
   for (let a = 0; a < rows; a++) for (let b = 0; b < cols; b++) r(x + 1 + b * gx, y + a * (sy || 3), Math.max(1, gx - 1), 1, col);
 }
-function houseSprite(tier, pal, v) {
+function houseSprite(tier, pal, v, L) {
+  if (L && tier <= HOUSE_IX.tenement && typeof vernacularHouse === 'function') { const s = vernacularHouse(tier, pal, v, L); if (s) return s; }
   const [rf, hi, lo] = ROOFS[pal];
   if (HOUSES[tier].id === 'midrise' && typeof midriseSprite === 'function') return midriseSprite(v % MIDRISE.length, pal);
   switch (HOUSES[tier].id) {
@@ -361,10 +363,11 @@ function buildingSprite(b) {
   if (b.ruin) return ruinSprite(b.size);
   const office = b.type !== 'house' && BLD[b.type] && BLD[b.type].office && typeof officeSprite === 'function';
   if (b.type !== 'house' && b.type !== 'monument' && !office && !SPR[b.type]) return siteSprite(b.size);  // no art yet: a plain site rather than nothing
-  const key = b.type === 'house' ? `h${b.tier}.${pal}.${b.var}` : b.type === 'monument' ? `m${b.era || 2}` : `${b.type}.${pal}`;
+  const L = b.type === 'house' && b.town && b.tier <= HOUSE_IX.tenement && typeof townLook === 'function' ? townLook(b.town) : null;
+  const key = b.type === 'house' ? `h${b.tier}.${pal}.${b.var}${L ? '.' + L.key : ''}` : b.type === 'monument' ? `m${b.era || 2}` : `${b.type}.${pal}`;
   let s = spriteCache.get(key);
   if (s) return s;
-  if (b.type === 'house') s = houseSprite(b.tier, pal, b.var);
+  if (b.type === 'house') s = houseSprite(b.tier, pal, b.var, L);
   else if (b.type === 'monument') s = monumentSprite(b.done ? (b.era || 2) : 2);
   else if (office) s = officeSprite(b.type, pal);
   else {

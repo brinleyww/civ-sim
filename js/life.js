@@ -80,13 +80,14 @@ function newFaith(t, parent) {
   const tenets = parent ? parent.tenets.slice() : [];
   while (tenets.length < 2) { const q = rint(TENETS.length); if (!tenets.includes(q)) tenets.push(q); }
   if (parent) tenets[rint(2)] = rint(TENETS.length);
-  const f = { id, name: `${cap(word(t.culture, 2))}ism`, kind: parent ? parent.kind : pick(FAITH_KIND), hue, color: `hsl(${hue},60%,62%)`, born: Math.floor(year()), home: t.name, parent: parent ? parent.id : -1, tenets, followers: 0, founder: '', alive: true };
+  const f = { id, name: `${cap(word(t.culture, 2))}ism`, kind: parent ? parent.kind : pick(FAITH_KIND), hue, color: `hsl(${hue},60%,62%)`, born: Math.floor(year()), home: t.name, parent: parent ? parent.id : -1, tenets, followers: 0, founder: '', alive: true, fervor: 1, corrupt: 0, reformed: 0, reformY: -999 };
   W.faiths.push(f);
   return f;
 }
-function faithFx(f) { const o = {}; for (const q of f.tenets) { const X = TENETS[q].fx; for (const k in X) o[k] = (o[k] === undefined ? (k === 'happy' ? 0 : 1) : o[k]) * (k === 'happy' ? 1 : X[k]) + (k === 'happy' ? X[k] : 0); } return o; }
+function faithFx(f) { const o = {}; for (const q of f.tenets) { const X = TENETS[q].fx; for (const k in X) o[k] = (o[k] === undefined ? (k === 'happy' ? 0 : 1) : o[k]) * (k === 'happy' ? 1 : X[k]) + (k === 'happy' ? X[k] : 0); } if (o.happy !== undefined && f.fervor !== undefined) o.happy *= f.fervor; return o; }  // a faith people barely believe in comforts them less
 function faithYear(t) {
   const yr = year();
+  townSocYear(t);  // ages, classes and language (statecraft.js)
   // the first temple gives a people something to believe in together
   if (t.faith < 0) {
     if ((knows(t, 'burial') || t.count.shrine) && rnd() < 0.05) {
@@ -103,7 +104,9 @@ function faithYear(t) {
   // ideas travel with merchants and missionaries, faster to the faithless and into the crowded poor
   for (const o of t.partners) {
     if (o.faith === t.faith) continue;
-    const pull = 0.01 + (t.count.temple || 0) * 0.004 + (t.count.cathedral || 0) * 0.02 + (t.count.monastery || 0) * 0.01 + (o.faith < 0 ? 0.04 : 0);
+    const of = o.faith >= 0 ? W.faiths[o.faith] : null;
+    // a reformed faith spreads fastest through towns that can read, where the old church has grown rich
+    const pull = 0.01 + (t.count.temple || 0) * 0.004 + (t.count.cathedral || 0) * 0.02 + (t.count.monastery || 0) * 0.01 + (o.faith < 0 ? 0.04 : 0) + (F.reformed && of && o.literacy > 0.2 && of.corrupt > 0.4 ? 0.03 : 0);
     if (rnd() < pull * (o.polity === t.polity ? 1.5 : 0.7) && rnd() < tn(t) / (tn(t) + tn(o))) {
       const old = o.faith;
       o.faith = t.faith; recomputeMods(o);
@@ -118,15 +121,25 @@ function faithYear(t) {
     adjustRel(t.polity, t.polity, 0);
     t.unrest = Math.min(100, t.unrest + 20);
   }
-  // persecution: a faith that isn't the capital's has a hard time under a zealous ruler
-  const cap0 = t.polity.capital;
-  if (cap0 && cap0 !== t && cap0.faith >= 0 && cap0.faith !== t.faith) {
-    const scienceAge = knows(cap0, 'humanism');
+  // reformation: a rich, worldly church, a printing press and people who can read
+  if (F.corrupt > 0.55 && yr - F.reformY > 60 && tn(t) > 80 && t.literacy > 0.2 && t.polity.capital !== t && knows(t, 'printing') && rnd() < 0.04 * (F.corrupt - 0.45)) {
+    const nf = newFaith(t, F);
+    if (!nf.tenets.includes(2)) nf.tenets[nf.tenets[0] === 2 ? 0 : 1] = 2;
+    if (nf.tenets[0] === nf.tenets[1]) nf.tenets[0] = (nf.tenets[1] + 3) % TENETS.length;
+    nf.reformed = 1; nf.fervor = 1.3; F.reformY = Math.floor(yr); F.corrupt *= 0.6; F.fervor = Math.min(1.5, F.fervor + 0.2);
+    t.faith = nf.id; recomputeMods(t); t.unrest = Math.min(100, t.unrest + 15);
+    chronT('gov', `A preacher in ${t.name} denounces the wealth of the ${F.name} priesthood, and the printing presses carry every word. The ${nf.name} reformation has begun.`, t);
+    return;
+  }
+  // persecution: a faith that isn't the capital's has a hard time under a zealous ruler, unless the law protects it
+  const cap0 = t.polity.capital, lawF = t.polity.soc ? t.polity.soc.laws[2] : 0;
+  if (cap0 && cap0 !== t && cap0.faith >= 0 && cap0.faith !== t.faith && lawF < 2) {
+    const scienceAge = knows(cap0, 'humanism') || lawF === 1;
     t.unrest = Math.min(100, t.unrest + (scienceAge ? 0.5 : 3));
     if (!scienceAge && rnd() < 0.02 && tn(t) > 40) { chronT('gov', `Followers of ${F.name} are driven out of ${t.name} on the orders of the ${polityTitle(t.polity)}.`, t); const go = Math.floor(t.members.length * 0.05); for (let k = 0; k < go; k++) { const v = t.members[rint(t.members.length)]; if (v && !v.army && !v.leader && t.partners.length) { const to = pick(t.partners); moveTo(v, to); startMigrate(v, nearTile(to.i, 3)); } } }
   }
   // religion and neighbours: shared faith warms, different faith cools
-  if (rnd() < 0.05) for (const o of t.partners) if (o.polity !== t.polity && o.polity.capital && t.polity.capital === t && o.polity.capital === o) adjustRel(t.polity, o.polity, o.faith === t.faith ? 1 : -0.6);
+  if (rnd() < 0.05) for (const o of t.partners) if (o.polity !== t.polity && o.polity.capital && t.polity.capital === t && o.polity.capital === o) { const of = o.faith >= 0 ? W.faiths[o.faith] : null, sib = of && (of.parent === t.faith || F.parent === o.faith) && yr - Math.max(F.born, of.born) < 120; adjustRel(t.polity, o.polity, o.faith === t.faith ? 1 : sib ? -1.8 : -0.6); }  // wars of religion: a fresh schism is bitterer than an old difference
 }
 // ---- disasters ----
 function disastersYear() {

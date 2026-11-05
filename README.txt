@@ -158,8 +158,8 @@ while the years rush; the side panels only redraw when something in them changed
 Trains and junctions: trains are real rolling stock (a steam engine and its tender, diesel, electric with pantographs, high-speed
 sets, maglev; coaches, boxcars, tank wagons, coal hoppers, container flats), each car following the track round the curves; from
 further out a crisp chain of outlined cars. Planes are proper prop and jet silhouettes; helicopters have a rotor blur. Where roads
-meet there are crossroads and T-junctions with stop and give-way lines, traffic lights cycling through their phases, mini and
-large roundabouts, zebra crossings on busy main streets, and where motorways meet other roads an overbridge, a diamond, a
+meet there are crossroads and T-junctions with stop and give-way lines, traffic lights cycling through their phases (no
+roundabouts), zebra crossings on busy main streets, and where motorways meet other roads an overbridge, a diamond, a
 cloverleaf or a stack. Level crossings bring their barriers down for a passing train; bridges carry streets over rivers and canals.
 Pace: a walker covers about a fifth of a tile a tick over grass. A dugout keeps up with a walker, sailing ships make a
 few times the pace, steamers and motor ships (half again faster than before) and cars many times it. An off-screen

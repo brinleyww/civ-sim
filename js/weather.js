@@ -164,7 +164,7 @@ function seasonWeather(wx) {
       a += wx.acc[q] * wt; r += (wx.norm[k] || wx.acc[q]) * wt;
     }
     const ratio = (a + 0.02) / (r + 0.02);
-    wx.wet[c] = clamp(Math.sqrt(ratio), 0.4, 1.7);
+    wx.wet[c] = clamp(Math.sqrt(ratio) * (wx.anom ? wx.anom[c] : 1), 0.4, 1.7);  // El Nino, long droughts, bare hills (food.js)
     wx.dry[c] = wx.wet[c] < 0.7 ? Math.min(250, wx.dry[c] + 1) : 0;
   }
   for (let c = 0; c < n; c++) {
@@ -172,6 +172,7 @@ function seasonWeather(wx) {
     wx.norm[k] = norm ? norm * 0.85 + wx.acc[c] * 0.15 : Math.max(wx.acc[c], 0.02);
     wx.acc[c] = 0;
   }
+  agriSeason();
   if (W.tick < TPY * 2) return;
   // what it means for the towns under it
   for (const t of W.towns) {

@@ -478,6 +478,7 @@ function labourYear(t) {
   let u = 0;
   if (money) {
     u = 0.02 + t.displaced / workers + cur.slump * 0.1 + Math.max(0, casual / workers - 0.3) * 0.3 + Math.max(0, t.crowd - 1) * 0.08 - (cur.boom || 0) * 0.02;
+    u += econUnemp(t);
     if (t.tech[TECH_IX.welfare]) u *= 0.9;
     u = clamp(u, 0, 0.45);
   }
@@ -494,12 +495,43 @@ function labourYear(t) {
   }
   // a town short of its engineers, clerks and doctors works worse; one with plenty of them works better
   const skilled = (workers * E[1]) / Math.max(n * 0.3, 1);
-  const q = clamp(1 - (demS > 1 ? vacS / demS : 0) * 0.25 + Math.min(skilled, 1) * 0.08, 0.82, 1.1);
+  // and its machines: a town short of capital for its methods, or out on strike, makes less with the same hands
+  const kq = t.ec ? t.ec.kq * (t.ec.strike ? 1 - 0.15 * t.ec.union : 1) : 1;
+  const q = clamp((1 - (demS > 1 ? vacS / demS : 0) * 0.25 + Math.min(skilled, 1) * 0.08) * kq, 0.72, 1.2);
   if (Math.abs(q - (t.labQ || 1)) > 0.01) { t.labQ = q; recomputeMods(t); }
   // out of work for long is its own kind of unrest
   t.unrest = Math.max(0, t.unrest + Math.max(0, t.unemp - 0.06) * (t.tech[TECH_IX.welfare] ? 22 : 45));
   if (t.unemp > 0.2 && n > 300 && !(t.unempNoteY > yr - 25)) { t.unempNoteY = yr; chronT('collapse', `One in ${Math.round(1 / t.unemp)} in ${t.name} can't find work. Queues form at every gate that's hiring.`, t); }
   assignTrades(t);
+  workMigration(t);
+}
+// People go where the work is: out of a town with too few jobs to one that pays better in bread after rent, at home or across a friendly border.
+function workMigration(t) {
+  const cur = t.polity.cur, u = t.unemp || 0, e = t.ec;
+  if (e) e.migOut = 0;
+  if (!e || cur.kind < 2 || u < 0.07 || t.members.length < 12 || t.attack) return;
+  const here = Math.max(t.realWage || 0, 0.01) * (1 - u);
+  let best = null, bs = 1.15;
+  for (const o of t.partners) {
+    if (!o.alive || o.nomad || o.attack || o.crowd > 0.95 || o.polity.cur.kind < 2) continue;
+    const abroad = o.polity !== t.polity;
+    if (abroad && (atWar(o.polity, t.polity) || relOf(o.polity, t.polity) < 10)) continue;
+    const s = (o.realWage || 0) * (1 - (o.unemp || 0)) / here * (abroad ? 0.8 : 1) * (1 - Math.min(0.5, Math.hypot(o.x - t.x, o.y - t.y) / 400));
+    if (s > bs) { bs = s; best = o; }
+  }
+  if (!best) return;
+  const go = Math.min(12, Math.floor(t.members.length * (u - 0.05) * 0.08 * Math.min(bs - 1, 1.5)) + (rnd() < 0.5 ? 1 : 0));
+  let moved = 0;
+  for (let k = 0; k < go * 4 && moved < go; k++) {
+    const p = t.members[rint(t.members.length)];
+    if (!p || p.army || p.leader || p.btl || p.aboard || p.task === T_MIGRATE || p.job <= J.ELDER) continue;
+    const a = ageOf(p);
+    // the young and the out-of-work go first
+    if (a < 16 || a > 45 || (p.idleY <= 0 && rnd() < 0.7)) continue;
+    emigrate(p, best); startMigrate(p, nearTile(best.i, 3)); p.job = J.NONE; moved++;
+  }
+  e.migOut = moved * t.scale;
+  if (best.ec) best.ec.migIn += moved * t.scale;
 }
 // The people simulated one by one get trades in the same proportions, keeping the one they have if it still exists.
 function assignTrades(t) {

@@ -456,6 +456,7 @@ function genWorld(opt) {
     if (H.pred && rnd() < 0.55) continue;  // hunters are rarer than what they hunt
     world.herds.push({ id: k, x: i % w + 0.5, y: ((i / w) | 0) + 0.5, type, n: Math.ceil(H.cap * (0.4 + rnd() * 0.6)), tx: i % w, ty: (i / w) | 0, owner: null });
   }
+  genSoils(world);  // food.js: soils by rock and climate, river deltas
   W = prev;
   return world;
 }
@@ -487,12 +488,16 @@ function riverNear(wd, x, y, r) {
   return false;
 }
 function cropSuit(crop, i) {
-  const C = CROPS[crop], t = W.temp[i], m = W.moist[i];
+  // a cold century or a warming one moves where each crop will grow
+  const C = CROPS[crop], t = W.temp[i] + (W.clim ? W.clim.t * 0.6 : 0), m = W.moist[i];
   if (W.water[i] || W.biome[i] === B.ROCK || W.biome[i] === B.SNOW) return 0;
   let s = 1;
   if (t < C.tMin) s *= clamp(1 - (C.tMin - t) * 6, 0, 1);
   if (t > C.tMax) s *= clamp(1 - (t - C.tMax) * 6, 0, 1);
-  const wet = m + (W.river[i] ? 0.4 : 0) + W.fert[i] / 900;
+  // a soil that holds water carries a crop through a dry spell; sand doesn't
+  const wet = m + (W.river[i] ? 0.4 : 0) + W.fert[i] / 900 + (W.soil ? (soilOf(i).hold - 1) * 0.15 : 0);
   if (wet < C.mMin) s *= clamp(1 - (C.mMin - wet) * 5, 0, 1);
+  // salted ground: past a point nothing will grow in it
+  if (W.salt && W.salt[i] > 40) s *= 1 - Math.min(0.85, (W.salt[i] - 40) / 200);
   return s;
 }

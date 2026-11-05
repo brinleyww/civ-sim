@@ -12,6 +12,7 @@ function shadeHex(h, f) {
 }
 function toHexRgb(c) {  // accepts '#rrggbb' or hsl() from a realm colour
   if (c[0] === '#') return c;
+  if (c[0] === 'r') { const q = c.match(/\d+/g); return q ? '#' + q.slice(0, 3).map(v => (+v).toString(16).padStart(2, '0')).join('') : '#888888'; }
   const m = c.match(/hsl\((\d+),(\d+)%,(\d+)%\)/);
   if (!m) return '#888888';
   const [r, g, b] = hslRgb(m[1] / 360, m[2] / 100, m[3] / 100);
@@ -61,38 +62,62 @@ function personSprite(skin, hair, sex, job, frame, era, small, wep, arm, polCol,
   // the stone age wears hides; the modern age wears jackets
   if (era <= 1 && job !== J.SOLDIER) { clothes = shadeHex('#8d6a43', ((job * 7) % 5 - 2) * 0.05); dark = '#6d5233'; }
   else if (era >= 7 && job !== J.SOLDIER && job !== J.CHILD && job !== J.ELDER) { const v = ['#3a4655', '#4a4a50', '#2f3a48'][job % 3]; if (job > J.BUILD) { clothes = v; dark = shadeHex(v, -0.2); } }
-  // legs
-  const legA = frame === 1 ? -1 : frame === 2 ? 1 : 0;
-  const trouser = era >= 6 ? '#2e3540' : era <= 1 ? skinD : shadeHex(dark, -0.15);
+  // legs: the far leg a shade darker; a striding foot lifts; shoes point the way they walk
+  const legA = frame === 1 ? -1 : frame === 2 ? 1 : 0, bare = era <= 1, office = job === J.SCHOLAR || job === J.TRADE || job === J.SERVICE;
+  const trouser = bare ? skinD : era >= 9 ? '#c5ccd3' : era >= 7 ? (office ? '#2a2f3a' : ['#3b5577', '#2e3540', '#4a4236', '#3b5577'][hair & 3]) : era === 6 ? '#3a3a40' : era >= 4 ? shadeHex(toHexRgb(dark), -0.3) : shadeHex(toHexRgb(dark), -0.15);
+  const trouserF = shadeHex(toHexRgb(trouser), -0.18), shoe = bare ? skinD : era >= 6 ? '#1c1a18' : era >= 4 ? '#3a2818' : '#5a4128';
   if (!(mount === 1)) {
-    r(cx - 2 + (legA < 0 ? -1 : 0), yb - legH, 2, legH + (legA < 0 ? -1 : 0), trouser);
-    r(cx + 1 + (legA > 0 ? 1 : 0), yb - legH, 2, legH + (legA > 0 ? -1 : 0), trouser);
-    r(cx - 2 + (legA < 0 ? -1 : 0), yb - 1 + (legA < 0 ? -1 : 0), 2, 1, '#2b2118');
-    r(cx + 1 + (legA > 0 ? 1 : 0), yb - 1 + (legA > 0 ? -1 : 0), 2, 1, '#2b2118');
-  } else { r(cx - 3, yb - legH, 2, legH + 2, trouser); }
-  // body, shaded left to right; skirts and robes run longer
+    const x1 = cx - 2 + (legA < 0 ? -1 : 0), l1 = legA < 0 ? -1 : 0, x2 = cx + 1 + (legA > 0 ? 1 : 0), l2 = legA > 0 ? -1 : 0;
+    r(x1, yb - legH, 2, legH + l1, trouserF); r(x2, yb - legH, 2, legH + l2, trouser);
+    r(x1, yb - 1 + l1, 3, 1, shoe); r(x2, yb - 1 + l2, 3, 1, shoe);
+    if (era >= 7 && !bare) r(x2 + 2, yb - 1 + l2, 1, 1, '#e8e8e0');  // white soles on trainers
+  } else { r(cx - 3, yb - legH, 2, legH + 2, trouser); r(cx - 3, yb, 3, 1, shoe); }
+  // the body, shaded left to right; skirts and robes run longer; what's worn follows the age, then the work
   const by = yb - legH - bodyH;
-  const robe = (sex === 0 && era >= 2 && era <= 6 && job !== J.SOLDIER) || job === J.SCHOLAR;
-  r(cx - 2, by, 5, bodyH + (robe ? 2 : 0), clothes);
-  r(cx - 2, by, 1, bodyH + (robe ? 2 : 0), shadeHex(toHexRgb(clothes), 0.12));
-  r(cx + 2, by, 1, bodyH + (robe ? 2 : 0), dark);
-  r(cx - 2, by + bodyH - 2, 5, 1, dark);
+  const robe = (sex === 0 && era >= 2 && era <= 6 && job !== J.SOLDIER) || (job === J.SCHOLAR && era <= 5);
+  const bh = bodyH + (robe ? 2 : 0), cHex = toHexRgb(clothes);
+  r(cx - 2, by, 5, bh, clothes); r(cx - 2, by, 1, bh, shadeHex(cHex, 0.14)); r(cx + 2, by, 1, bh, dark);
+  r(cx - 1, by - 0, 3, 1, shadeHex(cHex, 0.08));  // shoulders round off
+  if (robe) r(cx - 2, by + bh - 1, 5, 1, dark);
+  if (job !== J.SOLDIER && job !== J.CHILD) {
+    if (era <= 1) { for (let k = 0; k < 5; k += 2) r(cx - 2 + k, by + bodyH - 1, 1, 1, shadeHex(cHex, 0.25)); r(cx - 2, by, 2, 1, '#d8c8a8'); }  // fringed hide, fur at the shoulder
+    else if (era <= 5) { r(cx - 2, by + bodyH - 2, 5, 1, era >= 4 ? '#3a2818' : '#6b4f30'); if (era >= 4) r(cx, by + bodyH - 2, 1, 1, '#c9a14a'); }  // belt and buckle
+    if (era === 5 || (era === 4 && office)) r(cx - 1, by, 3, 1, '#efe9da');  // a linen collar
+    if (era >= 4 && era <= 6 && sex === 0 && (job === J.FARM || job === J.SERVICE || job === J.CRAFT || job === J.GARDEN)) r(cx - 1, by + 2, 3, bh - 2, '#e6dfcc');  // apron
+    if (era === 6 && sex === 1) { r(cx - 2, by, 5, bodyH - 1, '#e6e0d2'); r(cx - 1, by + 1, 3, bodyH - 2, office ? '#2a2630' : '#5a4a3e'); r(cx, by + 1, 1, 1, '#c9a14a'); }  // shirt and waistcoat
+    if (era >= 7 && era <= 8 && office) { r(cx, by, 1, 3, '#e8e8e8'); r(cx, by + 1, 1, 2, ['#a33a3a', '#3a5a9a', '#3a7a4a'][hair % 3]); }  // open jacket, shirt and tie
+    if (era >= 9) { r(cx - 2, by + 1, 5, 1, cl0); r(cx - 2, by, 5, 1, '#e8eef2'); }  // smooth suit, a stripe in the trade's colour
+  }
+  if (era >= 9 && job !== J.SOLDIER && job !== J.CHILD && job !== J.ELDER) { r(cx - 2, by + 2, 5, bodyH - 2, '#d8dde2'); r(cx + 2, by + 2, 1, bodyH - 2, '#aeb6be'); }
   // armour over the top
   const A = ARMORS[arm || 0];
   if (A && A.col) { r(cx - 2, by, 5, 3, A.col); r(cx - 2, by, 1, 3, shadeHex(A.col, 0.25)); r(cx + 2, by, 1, 3, shadeHex(A.col, -0.2)); r(cx - 2, by + 3, 5, 1, polCol); }
   if (job === J.SOLDIER && arm === 5) { r(cx - 2, by, 5, bodyH, shadeHex(polCol, -0.4)); r(cx - 1, by + 2, 3, 1, shadeHex(polCol, -0.2)); }
-  // near arm
-  const swing = frame === 3 ? -2 : frame === 1 ? 1 : frame === 2 ? -1 : 0;
-  r(cx - 3, by + 1, 1, 3, skinD);
-  r(cx + 3, by + 1 + (swing < 0 ? swing : 0), 1, 3, skin);
-  // head
+  // arms swing against the legs; sleeves by the age (short in the hot modern world, rolled for the works)
+  const swing = frame === 3 ? -2 : frame === 1 ? 1 : frame === 2 ? -1 : 0, sleeve = era <= 1 ? skinD : era === 6 && sex === 1 ? '#d6d0c2' : dark;
+  const fa = frame === 1 ? -1 : frame === 2 ? 1 : 0;
+  r(cx - 3 + (fa < 0 ? -1 : 0), by + 1, 1, 2, sleeve); r(cx - 3 + (fa < 0 ? -1 : 0), by + 3, 1, 1, skinD);
+  r(cx + 3, by + 1 + (swing < 0 ? swing : 0), 1, 2, era <= 1 || (era >= 7 && !office && job !== J.SOLDIER) ? skin : shadeHex(cHex, -0.05)); r(cx + 3, by + 3 + (swing < 0 ? swing : 0), 1, 1, skin);
+  // head: a nose to say which way they face, an eye, a jaw in shadow
   const hy = by - 3;
-  r(cx - 1, hy, 4, 3, skin); r(cx + 2, hy + 1, 1, 1, skinD); r(cx, hy + 3, 2, 1, skinD);
-  r(cx + 2, hy + 1, 1, 1, '#1e1a16');   // eye
-  // hair: short or long, by person
-  r(cx - 1, hy - 1, 4, 1, hairC); r(cx - 2, hy, 1, sex === 0 ? 3 : 2, hairC); r(cx - 1, hy, 1, 1, hairL);
-  if (sex === 0) { r(cx - 2, hy + 3, 1, 2, hairC); }
-  if (job === J.ELDER) { r(cx - 1, hy - 1, 4, 1, '#c8c8c8'); r(cx - 2, hy, 1, 2, '#c8c8c8'); }
+  r(cx - 1, hy, 4, 3, skin); r(cx + 3, hy + 1, 1, 1, skin); r(cx + 2, hy + 2, 1, 1, skinD); r(cx, hy + 3, 2, 1, skinD);
+  r(cx + 2, hy + 1, 1, 1, '#1e1a16');
+  // hair: cut by sex and person, greying with age
+  const hc = job === J.ELDER ? '#c8c8c8' : hairC, st = (hair >> 1) % 3;
+  r(cx - 1, hy - 1, 4, 1, hc); r(cx - 2, hy, 1, sex === 0 ? 3 : 2, hc); r(cx - 1, hy, 1, 1, job === J.ELDER ? '#e0e0e0' : hairL);
+  if (sex === 0) {
+    if (st === 0) r(cx - 2, hy + 3, 1, 2, hc);                                    // long, down the back
+    else if (st === 1) { r(cx - 3, hy - 1, 2, 2, hc); }                           // a bun
+    else { r(cx - 3, hy + 1, 1, 3, hc); r(cx - 3, hy + 1, 1, 1, '#a33a3a'); }    // a plait, tied
+    if (era >= 2 && era <= 5 && !small && (hair & 3) === 1 && job !== J.SOLDIER) { const sc = shadeHex(cHex, 0.3); r(cx - 2, hy - 1, 5, 1, sc); r(cx - 2, hy, 1, 4, sc); }  // headscarf
+  } else if (!small && job !== J.SOLDIER && (st === 1 || (job === J.ELDER && era <= 6)) && era <= 6) r(cx, hy + 2, 3, 1, hc);  // a beard
+  // hats of the age, when the work hasn't one of its own
+  if (job !== J.SOLDIER && !small && job !== J.FARM && job !== J.GARDEN && job !== J.MINE && job !== J.BUILD && job !== J.SAILOR && job !== J.SERVICE) {
+    if (era === 4 && !office && sex === 1 && (hair & 1)) { r(cx - 2, hy - 1, 5, 1, dark); r(cx - 2, hy, 1, 3, dark); }  // a hood
+    else if (era === 5 && office) { r(cx - 2, hy - 1, 6, 1, '#2a2a2e'); r(cx - 1, hy - 2, 4, 1, '#2a2a2e'); }  // broad-brimmed hat
+    else if (era === 6 && office && sex === 1) { r(cx - 2, hy - 1, 6, 1, '#1e1e22'); r(cx - 1, hy - 4, 4, 3, '#1e1e22'); r(cx - 1, hy - 2, 4, 1, '#5a2a2a'); }  // top hat
+    else if (era === 6 && sex === 1) { r(cx - 1, hy - 1, 4, 1, '#4a4a50'); r(cx + 3, hy, 1, 1, '#4a4a50'); }  // flat cap
+  }
   // what they're holding and wearing on their head
   const hx = cx + 4, hyy = by + 1 + (swing < 0 ? swing : 0);
   if (job === J.SOLDIER) {
@@ -222,12 +247,18 @@ function animalSprite(type, frame) {
   const r = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
   const H = HERD_TYPES[type], col = H.color, hi = shadeHex(col, 0.2), lo = shadeHex(col, -0.28);
   const leg = frame ? 1 : 0;
-  const big = H.name === 'mammoth' ? 1 : 0;
-  r(4 - big, 13, 12 + big * 2, 1, 'rgba(0,0,0,.22)');
-  r(4 - big, 5 - big * 2, 10 + big * 2, 5 + big * 2, col); r(4 - big, 5 - big * 2, 10 + big * 2, 1, hi); r(4 - big, 9, 10 + big * 2, 1, lo);
-  r(13 + big, 3 - big, 4, 4, col); r(16 + big, 4 - big, 2, 2, hi); r(17 + big, 4 - big, 1, 1, '#1a1a1a');
-  r(5, 10, 2, 3 + (leg ? -1 : 0), lo); r(8, 10, 2, 3 - (leg ? 0 : 1), lo); r(11, 10, 2, 3 + (leg ? -1 : 0), lo);
-  r(3 - big, 5 - big, 1, 3, lo);
+  const big = H.name === 'mammoth' ? 1 : 0, cat = /lions|wolves/.test(H.name), hoof = /deer|antelope|aurochs|bison|goat|horses|cattle|sheep/.test(H.name);
+  const legD = shadeHex(col, -0.42), hoofC = hoof ? '#2a221a' : lo;
+  g.fillStyle = 'rgba(0,0,0,.22)'; g.beginPath(); g.ellipse(10, 13, 7 + big, 1.2, 0, 0, 6.283); g.fill();
+  // far legs first, darker; near legs over the body's edge; the gait alternates pairs
+  r(6, 10, 1, 3 - leg, legD); r(12, 10, 1, 2 + leg, legD);
+  r(4 - big, 5 - big * 2, 10 + big * 2, 5 + big * 2, col); r(4 - big, 5 - big * 2, 10 + big * 2, 1, hi); r(5 - big, 6 - big * 2, 8 + big * 2, 1, shadeHex(col, 0.1));
+  r(4 - big, 9, 10 + big * 2, 1, lo); r(6, 9, 6, 1, shadeHex(col, 0.18));  // a paler belly
+  r(13 + big, 3 - big, 4, 4, col); r(16 + big, 4 - big, 2, 2, hi); r(17 + big, 4 - big, 1, 1, '#1a1a1a'); r(13 + big, 3 - big, 1, 1, hi);
+  r(18 + big - (cat ? 0 : 1), 5 - big, 1, 1, shadeHex(col, -0.5));  // muzzle
+  r(5, 10, 2, 3 + (leg ? -1 : 0), lo); r(11, 10, 2, 3 - (leg ? 0 : 1), lo);
+  r(5, 12 + (leg ? -1 : 0), 2, 1, hoofC); r(11, 12 - (leg ? 0 : 1), 2, 1, hoofC);
+  r(3 - big, 5 - big, 1, 3, lo); r(2 - big, 7 - big + leg, 1, 2, lo);  // tail swishes
   if (/deer|antelope/.test(H.name)) { r(15, 0, 1, 3, '#5a4228'); r(14, 1, 3, 1, '#5a4228'); }
   if (/aurochs|bison/.test(H.name)) { r(16, 2, 1, 2, '#ddd'); r(5, 4, 6, 2, lo); }
   if (/goat/.test(H.name)) { r(15, 1, 2, 2, '#b8b0a0'); }

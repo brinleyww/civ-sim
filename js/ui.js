@@ -163,14 +163,14 @@ function townEconHTML(t) {
   const cur = t.polity.cur, tops = [R.FOOD, R.WOOD, R.CLOTH, R.TOOLS, R.STEEL, R.GOODS];
   if (cur.kind < 2) return `<div class="sub">${cur.kind ? 'People swap salt, shells and cattle.' : 'No money yet. People swap what they have.'}</div>`;
   return `<div class="kv"><span>Output a year</span><b>${fmt(t.gdp)} ${esc(cur.name)}</b><span>Typical wage</span><b>${t.wage.toFixed(1)}</b><span>Loaf-equivalent wage</span><b>${t.realWage.toFixed(1)}</b><span>Money in town</span><b>${fmt(t.cash)}</b><span>Top tenth holds</span><b>${Math.round(t.gini * 70)}%</b></div>
-  <div class="goods">${tops.filter(r => wantOf(t, r) > 0 || t.stock[r] > 1).map(r => `<div><span>${RES_NAME[r]}</span><b>${t.price[r] < 10 ? t.price[r].toFixed(1) : fmt(t.price[r])}</b></div>`).join('')}</div>`;
+  <div class="goods">${tops.filter(r => wantOf(t, r) > 0 || t.stock[r] > 1).map(r => `<div><span>${RES_NAME[r]}</span><b>${t.price[r] < 10 ? t.price[r].toFixed(1) : fmt(t.price[r])}</b></div>`).join('')}</div>${econMoreHTML(t)}`;
 }
 function realmEconHTML(p) {
   const c = p.cur, d = c.gdpLast || 1;
   if (c.kind < 2) return `<div class="sub">${MONEY_KIND[c.kind]}. Nobody here is counting yet.</div>`;
   const hl = c.slump > 0.2 ? 'In a depression' : c.boom > 0.5 ? 'Booming' : c.infl > 0.1 ? 'Prices running away' : 'Steady';
   return `<div class="kv"><span>Money</span><b>${esc(c.name)} (${MONEY_KIND[c.kind].toLowerCase()})</b><span>Economy</span><b>${hl}</b><span>Output a year</span><b>${fmt(d)}</b><span>Per person</span><b>${(d / Math.max(p.pop, 1)).toFixed(1)}</b><span>Treasury</span><b>${fmt(c.treasury)}</b><span>Debt</span><b>${fmt(c.debt)} (${Math.round(c.debt / d * 100)}% of output)</b><span>Interest</span><b>${(c.rate * 100).toFixed(1)}%</b><span>Inflation</span><b>${(c.infl * 100).toFixed(1)}%</b><span>Prices since it began</span><b>${c.level.toFixed(1)}x</b><span>Tax rate</span><b>${Math.round(c.tax * 100)}%</b><span>Tariff</span><b>${Math.round(c.tariff * 100)}%</b><span>Worth abroad</span><b>${c.value.toFixed(3)}</b>${c.debase > 0.05 ? `<span>Metal in the coin</span><b>${Math.round((1 - c.debase) * 100)}%</b>` : ''}</div>
-  ${c.unpaid ? `<div class="sub" style="color:#ff8f7a">The soldiers haven't been paid for ${c.unpaid} years.</div>` : ''}`;
+  ${c.unpaid ? `<div class="sub" style="color:#ff8f7a">The soldiers haven't been paid for ${c.unpaid} years.</div>` : ''}${econMoreHTML(p)}`;
 }
 function townHTML(t) {
   const n = tn(t), st = t.stock, yrs = st[R.FOOD] / Math.max(n * 4, 1);
@@ -208,10 +208,12 @@ function townHTML(t) {
   ${t.folk ? `<span>Simulated</span><b>${fmt(t.members.length)} one by one, ${fmt(t.folk)} as a crowd</b>` : ''}
   <span>Water</span><b>${t.near.fresh ? 'Fresh water close by' : t.count.well || t.count.cistern || t.count.aqueduct ? 'Wells and cisterns' : t.near.water ? 'Only salt water' : 'None nearby'}</b>
   <span>Getting about</span><b>${TRANS_NAME[t.trans]}${t.mod.rail ? ', railway' : ''}</b>
+  ${typeof townLookHTML === 'function' ? townLookHTML(t) : ''}
   <span>Housing</span><b>${fmt(n)} in space for ${fmt(t.cap)}</b>
   <span>Food in store</span><b>${yrs.toFixed(1)} years</b>
   ${t.crop ? `<span>Staple</span><b>${CROPS[t.crop].name} · ${t.fields.length} fields</b>` : ''}
   ${t.tameHerd ? `<span>Herd</span><b>${t.tameHerd.n} ${HERD_TYPES[t.tameHerd.type].name.replace('wild ', '')}</b>` : ''}
+  ${landTownHTML(t)}
   ${t.plots.length ? `<span>Planted</span><b>${PLANTS.map((P, k) => P && t.plotC[k] ? `${t.plotC[k]} ${P.name.toLowerCase()}` : '').filter(Boolean).slice(0, 4).join(', ')}</b>` : ''}
   <span>Trades with</span><b>${t.partners.length ? t.partners.slice(0, 3).map(townLink).join(', ') + (t.partners.length > 3 ? ` +${t.partners.length - 3}` : '') : 'nobody yet'}</b>
   ${t.seaPartners && t.seaPartners.length ? `<span>By sea to</span><b>${t.seaPartners.slice(0, 3).map(townLink).join(', ')}${t.seaPartners.length > 3 ? ` +${t.seaPartners.length - 3}` : ''}</b>` : ''}</div>
@@ -233,7 +235,7 @@ function townHTML(t) {
   <h4>Goods</h4><div class="goods">${goods.join('')}</div>
   <h4>Who does what</h4>${jobs.map(([j, c]) => bar(JOB_NAME[j], c, maxJ, JOB_COLOR[j])).join('')}
   ${t.jobs[J.CHILD] + t.jobs[J.ELDER] ? `<div class="sub" style="margin-top:3px">plus ${t.jobs[J.CHILD]} children, ${t.jobs[J.ELDER]} elders</div>` : ''}
-  ${eduTownHTML(t)}${t.occN ? `<h4>Trades and pay</h4>${townWorkHTML(t)}` : ''}${harbourHTML(t)}${officeHTML(t)}${parkingHTML(t)}
+  ${eduTownHTML(t)}${socTownHTML(t)}${t.occN ? `<h4>Trades and pay</h4>${townWorkHTML(t)}` : ''}${harbourHTML(t)}${officeHTML(t)}${parkingHTML(t)}
   ${t.devN ? `<div class="sub">${t.devN} old buildings bought and pulled down for new ones, last in year ${t.devY}.</div>` : ''}
   <h4>Working out</h4>${prog.slice(0, 4).map(([T, v]) => bar(esc(T.name), v, 1, '#e6c170', Math.floor(v * 100) + '%')).join('') || '<div class="sub">Nothing close yet.</div>'}
   ${pressures.length ? `<div class="sub" style="margin-top:3px">Pushed on by need: ${pressures.slice(0, 3).map(e => TAG_NAME[e[0]]).join(', ')}.</div>` : ''}
@@ -286,7 +288,7 @@ function polHTML(p) {
   ${allies.length ? `<div class="sub" style="margin-top:3px">Allied with ${allies.map(o => esc(o.name)).join(', ')}.</div>` : ''}
   ${grievancesHTML(p)}
   <h4>War</h4>
-  ${wars.length ? wars.map(w => `<div><a class="link" data-act="war" data-id="${w.id}">${esc(w.name)}</a> <span style="color:var(--ink3)">${esc(CAUSE_TEXT[w.cause] || '')}</span></div>`).join('') + bar('Support at home', p.support, 100, p.support < 30 ? '#e0705a' : '#8cc66a', Math.round(p.support) + '%') : '<div class="sub">At peace.</div>'}${inAssembly(p) ? '<div class="sub">Sends delegates to the World Assembly.</div>' : ''}${W.towns.some(o => o.polity === p && o.count.missilesilo) ? '<div class="sub">Has nuclear missiles: few dare attack it.</div>' : ''}${revolutionHTML(p)}
+  ${wars.length ? wars.map(w => `<div><a class="link" data-act="war" data-id="${w.id}">${esc(w.name)}</a> <span style="color:var(--ink3)">${esc(CAUSE_TEXT[w.cause] || '')}</span></div>`).join('') + bar('Support at home', p.support, 100, p.support < 30 ? '#e0705a' : '#8cc66a', Math.round(p.support) + '%') : '<div class="sub">At peace.</div>'}${inAssembly(p) ? '<div class="sub">Sends delegates to the World Assembly.</div>' : ''}${W.towns.some(o => o.polity === p && o.count.missilesilo) ? '<div class="sub">Has nuclear missiles: few dare attack it.</div>' : ''}${revolutionHTML(p)}${realmSocHTML(p)}
   ${(W.loans || []).some(l => l.to === p.id) ? `<div class="sub">Owes ${(W.loans || []).filter(l => l.to === p.id).map(l => `${fmt(Math.round(l.left))} ${esc(W.polities[l.from].cur.name)}s to ${esc(W.polities[l.from].name)}`).join(', ')}.</div>` : ''}
   <div class="kv"><span>Soldiers</span><b>${fmt(p.soldiers)}</b><span>Armies in the field</span><b>${armies.length}</b><span>Warships</span><b>${warships}</b><span>Merchant ships</span><b>${fleet.length - warships}</b></div>
   ${armies.slice(0, 4).map(a => `<div><a class="link" data-act="army" data-id="${a.id}">${esc(a.name)}</a> <span style="color:var(--ink3)">${a.soldiers.length}</span></div>`).join('')}
@@ -444,6 +446,7 @@ function tileHTML(i) {
     if (W.ice[i] > 80) rows.push(['Ice', 'Frozen over']);
     if (W.lane[i] >= SEA_LANE) rows.push(['Shipping', W.seaW[i] ? 'A widened fairway: ships keep to the right' : W.lane[i] >= SEA_LANE * 3 ? 'A busy shipping lane' : 'A shipping lane']);
   }
+  landTileRows(i, rows);
   if (W.snowD[i] > 5) rows.push(['Snow', W.snowD[i] > 200 ? 'Glacier' : `${W.snowD[i]} cm`]);
   if (W.wx) rows.push(['Weather', wxDescribe(i)]);
   if (W.type === 'earth') { const lat = earthLat((i / W.w) | 0, W.h), lon = ((i % W.w) + 0.5) / W.w * 360 + EARTH_LON0, L = lon > 180 ? lon - 360 : lon; rows.push(['On the globe', `${Math.abs(lat).toFixed(0)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(L).toFixed(0)}°${L >= 0 ? 'E' : 'W'}`]); }

@@ -28,11 +28,12 @@ function segHit(ax, ay, bx, by, cx, cy, dx, dy) {
 function jnKind(cM, cm, t, four, h) {
   const n = t ? tn(t) : 0, kn = id => t && knows(t, id);
   if (cM === 3) return cm === 3 ? (kn('computers') || n >= 4000 ? 'stack' : 'clover') : cm === 2 ? 'clover' : cm === 1 ? 'diamond' : 'flyover';
-  if (cM === 2) return cm === 2 ? 'diamond' : n >= 3000 && kn('electric') ? 'signals' : 'roundabout';
+  // no roundabouts (the user's choice): busy crossings get traffic lights once there is electricity, the rest are plain crossroads
+  if (cM === 2) return cm === 2 ? 'diamond' : kn('electric') ? 'signals' : 'cross';
   if (!four) return cM >= 1 && n >= 1500 && kn('electric') ? 'signals' : 'tee';
-  if (cM === 1 && cm >= 1) return n >= 800 && kn('electric') ? 'signals' : 'roundabout';
-  if (cM === 1) return n >= 2500 && kn('electric') ? 'signals' : h < 0.3 ? 'mini' : 'cross';
-  return h < 0.18 && n >= 400 ? 'mini' : 'cross';
+  if (cM === 1 && cm >= 1) return n >= 800 && kn('electric') ? 'signals' : 'cross';
+  if (cM === 1) return n >= 2500 && kn('electric') ? 'signals' : 'cross';
+  return 'cross';
 }
 function buildJunctions() {
   const N = W.roadNet;
@@ -307,7 +308,7 @@ function streetJunctions(x0, y0, x1, y1) {
     if (W.river[i] >= 2 || W.canal[i]) { if (lv >= 3 || (t && t.mod.car)) list.push({ i, x, y, kind: 'bridge', arms }); continue; }
     if (n < 3 || lv < 3 || !t || !t.mod.car) continue;  // white lines only on a made-up street, not on a dirt lane
     const pop = tn(t), h = hash2(x, y, 23), busy = W.lanes[i] >= 1 || W.rtype[i] === RT_IX.highstreet || W.rtype[i] === RT_IX.collector;
-    const kind = busy && pop >= 1200 && knows(t, 'electric') ? 'signals' : n >= 4 && pop >= 600 && h < 0.22 ? 'mini' : n >= 4 ? 'cross' : 'tee';
+    const kind = busy && pop >= 1200 && knows(t, 'electric') ? 'signals' : n >= 4 ? 'cross' : 'tee';
     // the main road is the two busiest, widest arms; the others give way to it
     const sc = k => (W.lanes[i + NB_D[k]] || 0) * 4 + road[i + NB_D[k]] + hash2(x, k, 5) * 0.5;
     const ks = []; for (let k = 0; k < 8; k++) if (arms & (1 << k)) ks.push(k);

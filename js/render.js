@@ -491,26 +491,9 @@ function drawWorld(dt) {
   const unit = z / 2;  // screen pixels per sprite pixel
   if (bmode === 'off') { /* hidden */ }
   else if (z >= 0.5 || bmode === 'on') {
-    vis.sort((a, b) => (a.y + a.size) - (b.y + b.size));
-    for (let k = 0; k < vis.length; k++) {
-      const b = vis[k], sx = Math.round((b.x * TS - c.x) * z), sy = Math.round(((b.y + b.size) * TS - c.y) * z);
-      const pw = b.size * SPR_PX * unit;
-      if (!b.ruin && !b.done) {
-        // source art is doubled by refine(): every sprite here has twice as many pixels as it takes up on the art grid
-        const site = siteSprite(b.size);
-        const sp = buildingSprite(b);
-        const f = clamp(b.prog / b.need, 0, 1);
-        const hs = sp.height * unit * 0.5;
-        if (f > 0.03) { const sh = sp.height * f; ctx.drawImage(sp, 0, sp.height - sh, sp.width, sh, sx, sy - hs * f, sp.width * unit * 0.5, hs * f); }
-        ctx.globalAlpha = 0.85; ctx.drawImage(site, sx, sy - pw, pw, pw); ctx.globalAlpha = 1;
-      } else {
-        const sp = buildingSprite(b);
-        const hs = sp.height * unit * 0.5;
-        ctx.drawImage(sp, sx, sy - hs, sp.width * unit * 0.5, hs);
-        if (b.up >= 0) { const site = siteSprite(b.size); ctx.globalAlpha = 0.6; ctx.drawImage(site, sx, sy - pw, pw, pw); ctx.globalAlpha = 1; }
-        const def = b.type === 'house' ? null : BLD[b.type];
-        if (def && def.smoke && z >= 1 && !b.ruin) drawSmoke(ctx, b, sx, sy - hs, unit, def.smoke);
-      }
+    if (!bldLayers(ctx, c, z, vis)) {
+      vis.sort(byFront);
+      for (let k = 0; k < vis.length; k++) drawBld(ctx, vis[k], Math.round((vis[k].x * TS - c.x) * z), Math.round(((vis[k].y + vis[k].size) * TS - c.y) * z), z, true);
     }
   } else {
     const ts = Math.max(1, TS * z), FC = FAR_BLD_COL;
@@ -541,6 +524,75 @@ function drawWorld(dt) {
   drawTopFX(ctx, c, z, dt);
   drawBattles(ctx, c, z);
   drawLabels(ctx, c, z, vw, vh);
+}
+// One building at screen (sx, sy = its front edge). smoke: draw the chimney smoke too (it moves, so the cached layers leave it out).
+const byFront = (a, b) => (a.y + a.size) - (b.y + b.size);
+function drawBld(ctx, b, sx, sy, z, smoke) {
+  const unit = z / 2, pw = b.size * SPR_PX * unit;
+  if (!b.ruin && !b.done) {
+    // source art is doubled by refine(): every sprite here has twice as many pixels as it takes up on the art grid
+    const site = siteSprite(b.size);
+    const sp = buildingSprite(b);
+    const f = clamp(b.prog / b.need, 0, 1);
+    const hs = sp.height * unit * 0.5;
+    if (f > 0.03) { const sh = sp.height * f; ctx.drawImage(sp, 0, sp.height - sh, sp.width, sh, sx, sy - hs * f, sp.width * unit * 0.5, hs * f); }
+    ctx.globalAlpha = 0.85; ctx.drawImage(site, sx, sy - pw, pw, pw); ctx.globalAlpha = 1;
+  } else {
+    const sp = buildingSprite(b);
+    const hs = sp.height * unit * 0.5;
+    ctx.drawImage(sp, sx, sy - hs, sp.width * unit * 0.5, hs);
+    if (b.up >= 0) { const site = siteSprite(b.size); ctx.globalAlpha = 0.6; ctx.drawImage(site, sx, sy - pw, pw, pw); ctx.globalAlpha = 1; }
+    if (smoke) { const def = b.type === 'house' ? null : BLD[b.type]; if (def && def.smoke && z >= 1 && !b.ruin) drawSmoke(ctx, b, sx, sy - hs, unit, def.smoke); }
+  }
+}
+// From middle distance a city is thousands of finished buildings that don't change from one frame to the next. They are drawn once
+// into a layer per block of the map, kept while the zoom holds still, and redrawn only when a building in that block changes.
+// Building sites (they grow every tick) and smoke are drawn live on top. While zooming, everything is drawn directly as before.
+const BL_CH = 24, BL_PAD = 14;  // block size in tiles; room above a block for tall buildings, in tiles
+const BLD_LAYER = { map: new Map(), used: [], live: [], frame: 0, z: 0, zSame: 0, sid: 1 };
+function sprId(sp) { return sp._sid || (sp._sid = BLD_LAYER.sid++); }
+function bldLayers(ctx, c, z, vis) {
+  const L = BLD_LAYER;
+  if (z !== L.z) { L.z = z; L.zSame = 0; } else L.zSame++;
+  if (z >= 1.6 || L.zSame < 4 || vis.length < 300 || typeof document === 'undefined') return false;
+  const fr = ++L.frame, used = L.used, live = L.live, M = L.map;
+  used.length = 0; live.length = 0;
+  for (let k = 0; k < vis.length; k++) {
+    const b = vis[k];
+    if (!b.ruin && !b.done) { live.push(b); continue; }
+    const kx = Math.floor(b.x / BL_CH), ky = Math.floor(b.y / BL_CH), key = ky * 4096 + kx;
+    let ly = M.get(key);
+    if (!ly) { ly = { kx, ky, cv: null, z: 0, sig: 0, n: 0, list: [], fr: 0, sigNow: 0 }; M.set(key, ly); }
+    if (ly.fr !== fr) { ly.fr = fr; ly.list.length = 0; ly.sigNow = 0; used.push(ly); }
+    ly.list.push(b);
+    const sp = buildingSprite(b);
+    ly.sigNow = (Math.imul(ly.sigNow ^ b.i, 16777619) + Math.imul(sprId(sp), 40503) + (b.up >= 0 ? 7 : 0)) | 0;
+  }
+  // back to front, block row by block row
+  used.sort((a, b) => a.ky - b.ky || a.kx - b.kx);
+  const cs = BL_CH * TS;
+  for (let q = 0; q < used.length; q++) {
+    const ly = used[q], ox = ly.kx * cs, top = ly.ky * cs - BL_PAD * TS;  // the layer's corner, in world px
+    if (ly.z !== z || ly.sig !== ly.sigNow || ly.n !== ly.list.length || !ly.cv) {
+      const wpx = Math.ceil((cs + 4 * TS) * z), hpx = Math.ceil((cs + (BL_PAD + 4) * TS) * z);
+      if (!ly.cv) ly.cv = document.createElement('canvas');
+      if (ly.cv.width !== wpx || ly.cv.height !== hpx) { ly.cv.width = wpx; ly.cv.height = hpx; }
+      const g = ly.cv.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, wpx, hpx);
+      g.imageSmoothingEnabled = ctx.imageSmoothingEnabled;
+      ly.list.sort(byFront);
+      for (let k = 0; k < ly.list.length; k++) { const b = ly.list[k]; drawBld(g, b, Math.round((b.x * TS - ox) * z), Math.round(((b.y + b.size) * TS - top) * z), z, false); }
+      ly.z = z; ly.sig = ly.sigNow; ly.n = ly.list.length;
+    }
+    ctx.drawImage(ly.cv, Math.round((ox - c.x) * z), Math.round((top - c.y) * z));
+  }
+  live.sort(byFront);
+  for (let k = 0; k < live.length; k++) { const b = live[k]; drawBld(ctx, b, Math.round((b.x * TS - c.x) * z), Math.round(((b.y + b.size) * TS - c.y) * z), z, true); }
+  // smoke over the finished works
+  if (z >= 1) for (let q = 0; q < used.length; q++) { const Ls = used[q].list; for (let k = 0; k < Ls.length; k++) { const b = Ls[k]; if (b.type === 'house' || b.ruin) continue; const def = BLD[b.type]; if (!def || !def.smoke) continue; const sp = buildingSprite(b); drawSmoke(ctx, b, Math.round((b.x * TS - c.x) * z), Math.round(((b.y + b.size) * TS - c.y) * z) - sp.height * z / 4, z / 2, def.smoke); } }
+  // blocks not seen for a while give their memory back
+  if (fr % 120 === 0) for (const [k, ly] of M) if (fr - ly.fr > 240) M.delete(k);
+  return true;
 }
 function drawSmoke(ctx, b, sx, sy, unit, kind) {
   const n = kind >= 2 ? 3 : 2, W0 = b.size * SPR_PX * unit;

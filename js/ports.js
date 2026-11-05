@@ -496,6 +496,7 @@ function returnBoat(p) {
 }
 // Yearly: boats wear out, boatwrights build, and a town short of boats buys them from one that has some to sell.
 function boatYear(t) {
+  t.boats = t.boats || 0; t.boatsSale = t.boatsSale || 0;  // saves from before boats were counted, and heals a NaN
   if (t.nomad) return;
   let out = 0;
   // a fisher called away mid-trip (to war, say) left the boat at the jetty: it isn't out any more
@@ -509,7 +510,7 @@ function boatYear(t) {
   // a fishing town already had its boats before anyone counted them: the first year there is a boat store, they are in it
   if (!t.boatsInit && room > 0) { t.boatsInit = 1; t.boats = Math.max(t.boats, want); }
   // with no boatwright in town, fishers carve and patch their own: a slow trickle, enough to keep a small fleet going
-  if (!t.count.boatyard && t.boats < want && t.stock[R.WOOD] >= 3) { const own = Math.min(want - t.boats, Math.max(1, Math.round(fishers / 5))); t.boats += own; t.stock[R.WOOD] -= own * 3; }
+  if (!t.count.boatyard && t.boats < want && t.stock[R.WOOD] >= 3) { const own = Math.min(want - t.boats, Math.max(1, Math.round(fishers / 5)), Math.floor(t.stock[R.WOOD] / 3)); t.boats += own; t.stock[R.WOOD] -= own * 3; }
   // boatwrights: a few hulls a year each, from timber (and sailcloth once boats carry sails)
   const yards = (t.count.boatyard || 0) * BLD.boatyard.boatsY + (t.count.slipway || 0) * 2 + (t.count.shipyard || 0) * 2;
   const sails = knows(t, 'sailing');

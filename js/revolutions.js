@@ -138,6 +138,9 @@ function revEffects(pol) {
     fx.happy = -5 * i + (k('unions') ? 3 * i : 0) + (k('welfare') ? 2 * i : 0);
     fx.order = -3 * i + (k('suffrage') ? 2 * i : 0);
   }
+  // the realm's laws, its treaties and where its people are in the shift to small families (see statecraft.js)
+  const S = pol.soc && pol.soc.fx;
+  if (S) for (const q in S) fx[q] = MOD_ADD[q] ? (fx[q] || 0) + S[q] : (fx[q] === undefined ? 1 : fx[q]) * S[q];
   const key = JSON.stringify(fx);
   if (key === pol.revKey) return;
   pol.revKey = key; pol.revFx = fx;

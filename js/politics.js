@@ -247,6 +247,7 @@ function updatePolities() {
 
     pathsYear(pol);
     reviewGov(pol, yr);
+    statecraftYear(pol, yr);
     if (!pol.ruler || !pol.ruler.alive) chooseRuler(pol, 'death');
     else if (GOV[pol.gov].vote && yr >= pol.termEnd) chooseRuler(pol, 'vote');
     if (pol.warCool > 0) pol.warCool--;
@@ -329,6 +330,7 @@ function reviewGov(pol, yr) {
   // failure
   if (st >= 4 && stab < 24 && army > 0.14 && id !== 'junta' && rnd() < 0.12) {
     if (rul) { rul.leader = false; pol.ruler = null; }
+    if (pol.soc) pol.soc.usurp = Math.floor(yr) + 25;
     setGov(pol, st >= 5 ? 'junta' : 'despotism', `Soldiers seize power in ${pol.name}.`);
     return;
   }
@@ -354,8 +356,9 @@ function chooseRuler(pol, why) {
     }
     return s;
   };
-  let next = null;
-  if (old && g.succ === 'heir') next = can.find(p => p.momName === old.name || p.dadName === old.name);
+  let next = null, how = '';
+  // primogeniture across the whole realm, then kin of the house; a house that dies out may pass its crown by marriage
+  if (old && g.succ === 'heir') { const h = heirOf(pol, old); next = h.p; how = h.kind; if (how === 'none' && personalUnion(pol, old)) { old.leader = false; return; } }
   if (!next) {
     let bs = -1e9;
     for (const p of can) { const s = score(p); if (s > bs) { bs = s; next = p; } }
@@ -379,8 +382,9 @@ function chooseRuler(pol, why) {
   pol.rulers.push({ name: next.name, title, from: yr, to: null, conq0: pol.conquests, epithet: '', sex: next.sex });
   if (pol.rulers.length > 30) pol.rulers.shift();
   pol.termEnd = g.vote ? yr + 6 + rint(4) : 1e9;
+  successionAfter(pol, old, next, how, why);
   if (g.st >= 3 && pol.pop >= 200) chronT('ruler', why === 'vote' ? `${next.name} wins the vote and becomes ${title} of ${pol.name}.` : `${title} ${next.name} ${old ? 'succeeds to rule' : 'comes to rule'} ${pol.name}.`, c);
-  if (old && why === 'death' && !g.vote && g.st >= 3 && pol.towns >= 5 && rnd() < 0.05 + pol.towns * 0.012 + (pol.stab < 35 ? 0.2 : 0)) civilWar(pol);
+  if (old && why === 'death' && !g.vote && g.st >= 3 && pol.towns >= (how === 'none' ? 3 : 5) && rnd() < 0.05 + pol.towns * 0.012 + (pol.stab < 35 ? 0.2 : 0) + succRisk(pol, how)) civilWar(pol);
 }
 function epithetFor(p, pol, rec) {
   const conq = pol.conquests - (rec.conq0 || 0), rule = (rec.to || 0) - rec.from;
