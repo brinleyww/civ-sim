@@ -147,7 +147,7 @@ function redevelopYear(t) {
     t.devY = yr; t.devN = (t.devN || 0) + bought;
     if (bought >= 2 && n > 500 && !(t.devNoteY > yr - 40)) {
       t.devNoteY = yr;
-      chronT('misc', `Developers in ${t.name} buy up ${bought} old buildings ${waterfront ? 'on the waterfront' : 'near the centre'} for ${fmtMoney(spent)} ${cur.name}s, pull them down and build ${HOUSES[top].name.toLowerCase()}s.`, t);
+      chronT('misc', `Developers in ${t.name} buy up ${bought} old buildings ${waterfront ? 'on the waterfront' : 'near the centre'} for ${fmtMoney(spent)} ${cur.name}s, pull them down and build ${top >= 0 ? HOUSES[top].name.toLowerCase() + 's' : 'anew'}.`, t);
     }
   }
 }

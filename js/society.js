@@ -454,7 +454,7 @@ function finishBuilding(b) {
   t.count[b.type] = (t.count[b.type] || 0) + 1;
   if (t.count['q_' + b.type]) t.count['q_' + b.type]--;
   if (def.port) { t.ports.push(b); t.portI = -1; t.hbV = (t.hbV || 0) + 1; }
-  if (def.fort) t.forts.push(b);
+  if (def.fort || MIL_BASE[b.type]) t.forts.push(b);  // where standing soldiers drill and muster
   if (def.craft) t.crafts.push(b);
   if (def.study) t.studies.push(b);
   if (def.service) t.services.push(b);
@@ -580,8 +580,11 @@ function findSpotWide(t, size, r0, pref, far) {
   if (t.spotMiss[mk] > W.tick) return -1;
   const w = W.w, n = tn(t), ph = rnd() * 6.283;
   let best = -1, bestS = -1e9, found = 0, looked = 0;
+  // no room for a cottage means no room for anything bigger either: don't walk the rings again to find that out
+  let boxed = false;
+  if (!far) for (let s = 1; s < size; s++) if (t.spotMiss[s] > W.tick) { boxed = true; break; }
   // something that wants open country (an airport) looks well out past the houses
-  for (let d = Math.max(2, r0 * (far ? 1 : 0.7)); d < r0 * (far ? 5 : 3) + (far ? 24 : 8) && found < 8 && looked < (far ? 14000 : 7000); d += 1) {
+  if (!boxed) for (let d = Math.max(2, r0 * (far ? 1 : 0.7)); d < r0 * (far ? 5 : 3) + (far ? 24 : 8) && found < 8 && looked < (far ? 14000 : 7000); d += 1) {
     const steps = Math.ceil(d * 6.283);
     for (let s = 0; s < steps; s++) {
       const a = ph + s / steps * 6.283, x = Math.round(t.x + Math.cos(a) * d), y = Math.round(t.y + Math.sin(a) * d);
@@ -594,7 +597,10 @@ function findSpotWide(t, size, r0, pref, far) {
     }
   }
   if (best < 0 && size > 1 && n >= 250 && !far) best = clearOldQuarter(t, size);
-  if (best < 0) t.spotMiss[mk] = W.tick + (TPY >> 2);
+  // a town boxed in by water, hills and its neighbours stays boxed in: each miss in a row waits longer before looking again (a season, up to a year)
+  t.spotMissN = t.spotMissN || {};
+  if (best < 0) { const k = t.spotMissN[mk] = Math.min(4, (t.spotMissN[mk] || 0) + 1); t.spotMiss[mk] = W.tick + (TPY >> 2) * k; }
+  else t.spotMissN[mk] = 0;
   return best;
 }
 // The oldest houses near the middle come down, and their people move into whatever the town builds next.
@@ -1074,7 +1080,8 @@ function moveTo(p, town) {
   p.town = town; p.spd = walkSpeed(p);
   p.culture = town.culture;
 }
-const walkSpeed = p => 2.5 * p.town.mod.speed * p.spdM * (p.mount === 1 ? 1.7 : p.mount === 2 ? 1.6 : 1);
+// about a fifth of a tile a tick over grass: a dugout keeps up with a walker, a sailing ship makes a few times the pace, a car or a steamer many times
+const walkSpeed = p => 3.2 * p.town.mod.speed * p.spdM * (p.mount === 1 ? 1.7 : p.mount === 2 ? 1.6 : 1);
 function startMigrate(p, i) {
   p.task = T_MIGRATE; p.step = 0; p.tgt = i; p.st = 0; p.wake = W.tick + rint(8); p.hidden = false; p.carry = 0;
 }
@@ -1126,7 +1133,7 @@ function tryColonize(t) {
   if (site < 0 && !t.nomad) site = findSite(t, far, far * (hungry ? 2.2 : 1.7), false);
   // a realm with ships that cross oceans looks beyond the horizon: empty coasts on other shores
   if ((site < 0 || t.pushWhy === 'sea' || rnd() < 0.25) && !t.nomad && t.mod.sail >= 2 && t.portLv >= 1) { const o = overseasSite(t); if (o >= 0) site = o; }
-  if (site < 0) return;
+  if (site < 0) { if (hungry) t.noSiteY = Math.floor(yr); return; }  // nowhere left to go: the realm feels it (war.js landHunger)
   const overseas = W.landId[site] !== W.landId[t.i];
   nodeBudget = Math.max(nodeBudget, 1);
   let carrier = null, landing = null;
@@ -1325,7 +1332,7 @@ function riot(t) {
   t.polity.stab -= 3;
   if (tn(t) > 60 && !(t.riotNote > year() - 20)) { t.riotNote = year(); chronT('collapse', `Riots break out in ${t.name}: too many people, too little of everything.`, t); }
   t.unrest *= 0.8;
-  if (t.polity.capital !== t && t.polity.towns >= 2 && tn(t) >= 28 && rnd() < 0.12) secede(t.polity, t, 14);
+  if (t.polity.capital !== t && t.polity.towns >= 2 && tn(t) >= 28 && rnd() < 0.12) startRevolt(t.polity, t);
 }
 function townYear(t) {
   const n = tn(t);

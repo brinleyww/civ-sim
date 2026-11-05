@@ -22,6 +22,49 @@ catch fever, freeze and desert. Soldiers fight in companies under a general with
 each one has their own weapon, armour, stamina, nerve and wounds. Battles can end in a rout,
 with prisoners taken. Sieges have walls, gates, engines, hunger and storming. Towns taken stay
 occupied until the peace, and can rise up. Click a battle's plate, then "Watch this up close".
+Armies are bigger: a realm calls up a larger share of its men (more when mobilised), from every town within several
+days' march (further by rail), can keep more hosts in the field at once, and sends larger drafts to fill the ranks.
+Risings: a town no longer just breaks away. It rises first, often with discontented neighbours, arms its own people,
+and the crown sends an army to put it down. It goes free only if the crown can't crush it: beaten in the field, broke,
+fighting another war as well, or worn out after years of it. A crushed rising goes back to the crown, its leaders are
+hanged and it stays sullen; a successful one becomes a realm of its own, and the old realm bears a grudge for
+generations: relations stay cold, and it looks for a chance to take the land back. A disputed succession works the
+same way. The town panel shows a rising in progress, and how the last one ended.
+Tactics: every general picks a plan from who they are (bold, clever or cautious), what their army is made of, the age
+they live in, the ground, the weather and the odds, and each one changes the fight: shield walls that turn blows, the
+tortoise that walks through arrows, the phalanx (deadly in front, helpless in the flank), pike-and-shot squares that
+break a charge, a lance charge that shatters a line, skirmisher screens, feigned retreats that string out the chasers,
+flanking rides, oblique order, a Cannae-style double envelopment where the surrounded surrender in droves, ambushes from
+woods or hills, night attacks where nobody can aim, holding the high ground or a river crossing, barrages before the
+infantry go in, defence in depth with companies falling back to the next trench line, blitz breakthroughs, combined arms,
+and air and drone support. Horse and armour ride down a broken army. Sieges are taken by storm, starved out (faster with a
+fleet blockading the harbour), mined from below (unless the defenders countermine), or battered by guns. On campaign:
+forced marches that leave stragglers on the road, outnumbered generals who refuse battle and harry the enemy's foragers
+instead, defenders who burn their own fields ahead of an invader, landings on a defended beach, and guerrilla war in the
+woods and hills round occupied towns. The battle panel names each side's plan and the turns the fight has taken.
+Most battles are now fought in the open, not at the walls. When an army comes within a day's march, the town weighs
+its levy against it: strong enough, it marches out to the best ground between (a ridge, or a river in front) and fights
+there; outmatched behind good walls, it shuts its gates and is besieged. The country turns out against raiders, a field
+army nearby runs the invader to ground instead, armies on campaign that sight each other close and fight, a stronger one
+goes looking for the enemy's host, and a relief army makes the besiegers turn and fight it (from behind their own siege
+lines, if a long siege let them dig a ring of trenches facing out as well as in). A battle opens with the skirmishers
+while the main lines stand, the reserve goes in when the line wavers or the enemy tires, tired front ranks rotate back,
+and a company that breaks shakes the ones beside it. A beaten side whose general still has it in hand falls back in good
+order; otherwise it runs, most of its losses come in the rout, and horse rides after the beaten army as it retreats to
+regroup. A captured general is a blow to the whole side. The chronicle gives each side's dead, the wounded and prisoners,
+and the treaty names the towns that change hands. Odds are weighed in men, not figures on the map.
+Why wars start: a realm with no room left to grow (towns that can't find a spot to build, families with no fields,
+colonists with nowhere to go, packed towns) goes to war for its neighbour's open, nearby and lightly held farmland, and
+says so. The realm panel's "Reasons for war" lists, for each neighbour it could take on, the motives its rulers weigh
+(land, tin, iron, oil, hunger, revenge, old hatred, a breakaway to retake, debts, empire, holy war), the relations, the
+odds, any truce and how likely war is this year; it is the same weighing the realm really does. The war panel gives the
+cause and aim and who joined, when and why. Allies come in at the start or later when a friend is hard pressed, march to
+defend each other's towns, lift each other's sieges and win back each other's lost towns, send money if they stay out,
+and get food into an ally's besieged town; an old enemy of one side may join the other for its own reasons.
+Mustering: soldiers fall in at their town's barracks, drill yard or fort, or at the town's edge facing the enemy, never
+the middle of town; contingents gather at home first, then march to join the main host. Standing soldiers drill at the
+barracks and other military buildings in peacetime. A host sent to stop an invasion or relieve a siege goes with whoever
+is ready instead of waiting for the whole levy.
 
 Water, land and getting about: seas and lakes drain downhill through named rivers; people need
 fresh water. Coal, iron, oil and the rest lie in veins that fit their geology, and give each realm a
@@ -103,11 +146,27 @@ fall. Offices create real jobs (clerks, secretaries, civil servants, underwriter
 When the middle of town is full, offices, banks and flats buy out old houses there and pay the families.
 Mid-rise blocks: a crowded town that couldn't fill a tower builds four- to eight-storey blocks instead, in 100 styles
 from the Renaissance palazzo and Georgian terrace to Haussmann, art deco, panel blocks and solarpunk courtyards.
-Map options: "Far buildings" turns off the little building squares when zoomed out; realm names shrink as you zoom
+Map options: the Buildings button cycles auto (drawn close up, small squares far out), on (drawn at every zoom) and off
+(hidden at every zoom); realm names shrink as you zoom
 out, small realms' names are hidden, and names never overlap.
 
 Speed: walking that happens off screen is done without route searches or steps (the same time,
-the same worn trails), so big worlds run about twice as fast.
+the same worn trails), so big worlds run about twice as fast. Zoomed far out (people are dots), the whole map
+walks that way, so watching the world from above runs as fast as looking at an empty corner. Towns hemmed in by
+water and hills stop searching for building room so often, and dragging or zooming the map gets the frame first
+while the years rush; the side panels only redraw when something in them changed.
+Trains and junctions: trains are real rolling stock (a steam engine and its tender, diesel, electric with pantographs, high-speed
+sets, maglev; coaches, boxcars, tank wagons, coal hoppers, container flats), each car following the track round the curves; from
+further out a crisp chain of outlined cars. Planes are proper prop and jet silhouettes; helicopters have a rotor blur. Where roads
+meet there are crossroads and T-junctions with stop and give-way lines, traffic lights cycling through their phases, mini and
+large roundabouts, zebra crossings on busy main streets, and where motorways meet other roads an overbridge, a diamond, a
+cloverleaf or a stack. Level crossings bring their barriers down for a passing train; bridges carry streets over rivers and canals.
+Pace: a walker covers about a fifth of a tile a tick over grass. A dugout keeps up with a walker, sailing ships make a
+few times the pace, steamers and motor ships (half again faster than before) and cars many times it. An off-screen
+walk is timed by the ground along the way, not by the building at either end (that bug starved the first bands).
+The first bands now hold their own: a new world can dip, but rarely dies out. You can pan a third of a screen past
+the map's edge, so realms on the rim aren't stuck under the panels. Tin is less scarce (lodes in the hills and tin
+washed into the valleys), and bronze takes about one part tin to seven of copper.
 
 The modern world: telephones, microchips, mobile phones, social media, online shopping, video games,
 supermarkets, car plants, chip foundries, battery gigafactories and tech campuses. A World Assembly
@@ -122,6 +181,12 @@ falls with the war, and rich realms hire mercenaries.
 
 Earth: pick "Earth" under Geography to play on the real continents. The seed still decides the fine
 coastline, hills, rain, rivers, soil, ore and wild crops.
+The Earth map is round east to west: pan past the Bering Strait and you come out on the other side, the map is drawn
+again beside itself so there's never an edge, and ships cross the Pacific over the date line. North and south still
+end. From far out the poles fade a little. The narrow seas stay open (the Red Sea, Gibraltar, Malacca, Hormuz), while
+the Suez and Panama necks stay solid land, so the only way through is to dig. Once a realm that holds the neck, or
+pays its owner for the right, knows how to cut ship canals and can pay, it digs the Suez or Panama Canal (and Kiel or
+Corinth on maps big enough for them to matter), and ships stop going round Africa and South America.
 
 Also: earthquakes, tsunamis, volcanoes, wildfires, locusts and great storms; faiths that spread, split
 and persecute (Faith map view); diet, literacy, smog and wealth change how long people live; slopes
@@ -129,6 +194,12 @@ erode, old buildings fall down, and families pass on names and money.
 
 A million people: past what your computer can run, towns keep a sample of real individuals and
 treat the rest as crowds that work, grow and die at the same rates.
+
+Feedback: the Feedback button (top bar and start screen) sends a note to the game's maker, with the world's year, size and
+seed if you leave the box ticked. If the game crashes it pauses instead of freezing, and sends the maker a crash report
+(the error, where in the code, the world's year and size, and the last chronicle lines) the same way. Notes go to a small Cloudflare Worker (feedback-worker/) and only the owner can read
+them: Feedback > Owner, then paste the owner key. Run feedback-worker/deploy.ps1 once to put the server up; it writes the
+key to feedback-worker/.owner-key.txt, which is never committed.
 
 Controls
   Drag / WASD   move the map        Scroll      zoom

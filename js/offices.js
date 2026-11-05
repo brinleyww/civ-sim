@@ -329,7 +329,7 @@ function densityTier(t, top, short) {
 // pays the families what the plot and the house are worth, and pulls them down.
 function buyPlot(t, size) {
   const yr = Math.floor(year());
-  if (t.buyPlotY === yr && t.buyPlotN >= 2) return -1;
+  if ((t.buyPlotY === yr && t.buyPlotN >= 2) || t.buyMiss > W.tick) return -1;
   const top = bestHouse(t), w = W.w, R0 = Math.round(3 + Math.sqrt(tn(t)) * 0.35);
   let best = -1, bs = -1e9, list = null;
   for (let k = 0; k < 90; k++) {
@@ -343,7 +343,7 @@ function buyPlot(t, size) {
     const s = -d - take.length * 1.5 + rnd();
     if (s > bs) { bs = s; best = i; list = take; }
   }
-  if (best < 0) return -1;
+  if (best < 0) { t.buyMiss = W.tick + 30; return -1; }  // nothing old enough to buy in the middle: not worth looking again this month
   const money = W.land && t.polity.cur.kind >= 2;
   let cost = 0;
   for (const b of list) cost += money ? plotPrice(t, b.i, 1) + HOUSES[b.tier].work * 0.3 * (t.polity.cur.level || 1) : 0;

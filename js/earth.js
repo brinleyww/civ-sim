@@ -135,6 +135,35 @@ const EARTH_PLATEAUS = [
   [[100, 45, 112, 45, 115, 40, 104, 36, 98, 39], 0.14],                           // Ordos and the loess
 ];
 
+// Narrow seas the ragged coastline would close at this scale: kept open, at least a tile of water. A line, and half its width in degrees.
+const EARTH_STRAITS = [
+  [[43.6, 12.5, 42.4, 14.3, 41, 16.6, 39.6, 18.6, 38.1, 21, 36.6, 23.6, 35.3, 26, 34.2, 27.6], 0.8],   // the Red Sea
+  [[34.2, 27.6, 33.3, 28.6, 32.6, 29.7], 0.25],                                                          // the Gulf of Suez
+  [[43.2, 12.6, 45, 12.2, 47.5, 12.5, 51, 12.4], 0.9],                                                   // Bab-el-Mandeb, out to the open Gulf of Aden
+  [[-7.5, 35.9, -5.6, 35.97, -4.3, 36.1, -2.6, 36.3, -0.8, 36.9, 1.5, 37.6], 0.3],                       // Gibraltar and the Alboran Sea
+  [[95, 6, 97.5, 4.2, 99.5, 3, 101.3, 2, 103, 1.3, 104.4, 1.2], 0.4],                                    // Malacca
+  [[55.8, 26.4, 56.6, 25.9, 57.5, 25.4], 0.3],                                                           // Hormuz
+];
+// Necks of land the noise could cut through: kept solid, so the only way across is a canal someone digs.
+const EARTH_NECKS = [
+  [[32.25, 31.05, 32.35, 30.6, 32.45, 30.2], 0.35],                                       // Suez, between the Mediterranean and the Gulf
+  [[-77.3, 8.4, -78.4, 9.2, -79.6, 9.15, -80.8, 8.55, -82.6, 8.9, -83.8, 9.9, -85, 11.2, -86.3, 12.6, -88, 13.8], 0.3],  // Panama and the rest of the isthmus up to Honduras
+];
+// Every tile within a band of a line, by its distance in tiles. At least two tiles across, so water joins edge to edge (the sea only spreads that way)
+// and a neck is too thick for a ship to slip through corner to corner.
+function earthBand(w, h, pts, halfDeg, fn) {
+  const r = Math.max(1.05, halfDeg * w / 360), P = [];
+  for (let k = 0; k < pts.length; k += 2) P.push([earthCol(pts[k], w), earthRow(pts[k + 1], h)]);
+  for (let s = 0; s + 1 < P.length; s++) {
+    const [ax, ay] = P[s], [bx, by] = P[s + 1], vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy || 1;
+    const x0 = Math.max(1, Math.floor(Math.min(ax, bx) - r - 1)), x1 = Math.min(w - 2, Math.ceil(Math.max(ax, bx) + r + 1));
+    const y0 = Math.max(1, Math.floor(Math.min(ay, by) - r - 1)), y1 = Math.min(h - 2, Math.ceil(Math.max(ay, by) + r + 1));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const px = x + 0.5, py = y + 0.5, t = clamp(((px - ax) * vx + (py - ay) * vy) / L2, 0, 1), dx = px - ax - vx * t, dy = py - ay - vy * t;
+      if (dx * dx + dy * dy <= r * r) fn(y * w + x);
+    }
+  }
+}
 // Fill a polygon into a mask, row by row.
 function earthFill(mask, w, h, pts, val) {
   const xs = [], ys = [];
@@ -191,6 +220,8 @@ function earthElevation(elev, w, h, nA, nB, nC, latRow) {
     const i = y * w + x, nz = fbm(nA, x / w * 34, y / h * 22, 4) * amp + fbm(nC, x / w * 90, y / h * 60, 2) * 0.6;
     shape[i] = (land[i] ? dl[i] - 0.5 : 0.5 - dw[i]) + (lake[i] ? 0 : nz);
   }
+  for (const [pts, hw] of EARTH_STRAITS) earthBand(w, h, pts, hw, i => { if (shape[i] > -0.6) shape[i] = -0.6; lake[i] = 0; });
+  for (const [pts, hw] of EARTH_NECKS) earthBand(w, h, pts, hw, i => { if (shape[i] < 0.6) shape[i] = 0.6; });
   const mask2 = new Uint8Array(n);
   for (let i = 0; i < n; i++) mask2[i] = shape[i] > 0 ? 1 : 0;
   const dl2 = earthDist(mask2, w, h, 1), dw2 = earthDist(mask2, w, h, 0);

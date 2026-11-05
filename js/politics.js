@@ -30,6 +30,7 @@ const GOV_IX = {}; GOV.forEach((g, i) => { g.ix = i; GOV_IX[g.id] = i; });
 const govSt = pol => GOV[pol.gov].st;
 const polityTitle = pol => {
   const g = GOV[pol.gov];
+  if (pol.rebel) return `${pol.name} Rising`;
   if (g.st <= 1) return `The ${pol.name} ${g.name}`;
   return `${g.name} of ${pol.name}`;
 };
@@ -71,7 +72,7 @@ function pathsYear(pol) {
     pol.nodes.push(node.key);
     rebuildPolFx(pol);
     for (const t of W.towns) if (t.polity === pol) recomputeMods(t);
-    if (pol.pop >= 40 && pol.capital && have >= 1) chronT('gov', `The ${polityTitle(pol)} is shaped by its ${P.name.toLowerCase()}: ${node.name}.`, pol.capital);
+    if (pol.pop >= 40 && pol.capital && have >= 1 && !pol.rebel) chronT('gov', `The ${polityTitle(pol)} is shaped by its ${P.name.toLowerCase()}: ${node.name}.`, pol.capital);
     return;
   }
 }
@@ -162,7 +163,17 @@ function relationsYear() {
     if (!atWar(a, b) && now >= 45 && a.allies.length < 3 && b.allies.length < 3 && govSt(a) >= 2 && govSt(b) >= 2 && !areAllies(a, b) && rnd() < 0.05) makeAlliance(a, b);
     if (areAllies(a, b) && now < 12 && rnd() < 0.2) breakAlliance(a, b, 'too many broken promises');
   }
+  // a realm that lost a province to a rising doesn't make friends with it for a long time
+  for (const a of W.polities) {
+    if (!a.alive || !a.grudge) continue;
+    for (const k in a.grudge) {
+      const b = W.polities[+k], gr = b && b.alive ? grudgeOf(a, b) : 0;
+      if (gr <= 0) { delete a.grudge[k]; continue; }
+      if (relOf(a, b) > 15 - gr) a.rel[b.id] = b.rel[a.id] = 15 - gr;
+    }
+  }
 }
+const grudgeOf = (a, b) => { const g = a.grudge && a.grudge[b.id]; return g ? Math.max(0, g.v - (year() - g.yr)) : 0; };
 
 // ---- moving a town between realms is the one place all of this has to stay consistent ----
 function transferTown(t, np) {
@@ -254,7 +265,7 @@ function killPolity(pol, yr) {
   pol.allies.length = 0;
   for (const k in pol.warsWith) dropFromWar(pol, pol.warsWith[k]);
   if (pol.ruler && pol.rulers.length) { const r = pol.rulers[pol.rulers.length - 1]; if (r.to === null) r.to = Math.floor(yr); }
-  if (pol.peak >= 60 && govSt(pol) >= 2) chron('gov', `The ${polityTitle(pol)} is no more, after ${Math.floor(yr - pol.founded)} years.`);
+  if (pol.peak >= 60 && govSt(pol) >= 2 && !pol.rebel) chron('gov', `The ${polityTitle(pol)} is no more, after ${Math.floor(yr - pol.founded)} years.`);
 }
 function tributeYear(pol) {
   const o = W.polities[pol.overlord];
@@ -388,27 +399,118 @@ function epithetFor(p, pol, rec) {
 }
 // Realms overreach: past what their roads and records can hold together, far-off towns start to slip away.
 function maybeRebel(pol) {
-  const cap = pol.capital; if (!cap) return;
+  const cap = pol.capital; if (!cap || pol.rebel) return;
   const reach = 34 + cap.mod.admin + govSt(pol) * 3;
   const hold = 5 + govSt(pol) + cap.mod.admin * 0.08;
   const strain = (1 + Math.max(0, pol.towns - hold) * 0.35 + (W.people.length && pol.pop > W.people.length * 0.45 ? 1.5 : 0)) * clamp(1.7 - pol.stab / 50, 0.4, 2.5);
   for (const t of W.towns) {
-    if (t.polity !== pol || t === cap || t.nomad) continue;
+    if (t.polity !== pol || t === cap || t.nomad || t.occupier || t.attack) continue;
     const d = Math.hypot(t.x - cap.x, t.y - cap.y);
-    const unrest = ((d / reach) ** 2 * 0.012 + (t.famine > 0 ? 0.015 : 0) + (t.unrest || 0) * 0.0006) * strain;
-    if (tn(t) >= 28 && rnd() < unrest) { secede(pol, t, 18); return; }
+    const unrest = ((d / reach) ** 2 * 0.012 + (t.famine > 0 ? 0.015 : 0) + (t.unrest || 0) * 0.0006) * strain * (t.crushed > year() - 25 ? 0.4 : 1);
+    if (tn(t) >= 28 && rnd() < unrest) { startRevolt(pol, t); return; }
   }
 }
-function secede(pol, t, r) {
+// Breaking away takes a rising first. The town and any neighbours who share its grievances take up arms, the crown sends an army,
+// and only if that army can't put them down (beaten, broke, busy with another war, or simply worn out) do they go free.
+function startRevolt(pol, t) {
+  const cap = pol.capital;
+  if (!cap || pol.rebel || t.polity !== pol || t === cap || t.nomad || t.occupier || t.attack) return null;
+  const yr = year();
+  const np = secede(pol, t, 0, true);
+  np.rebel = { from: pol.id, seat: t, start: yr, joined: 0, over: '' };
+  np.mob = 0.6; np.support = 85; np.warCool = 99;
+  for (const o of W.towns) {
+    if (o.polity !== pol || o === cap || o.nomad || o.occupier || o.attack) continue;
+    const d = Math.hypot(o.x - t.x, o.y - t.y);
+    if (d > 24) continue;
+    const want = (o.unrest || 0) / 100 * 0.8 + (o.famine > 0 ? 0.2 : 0) + (o.culture !== cap.culture ? 0.15 : 0);
+    if (rnd() < want * (1 - d / 30)) { transferTown(o, np); np.rebel.joined++; }
+  }
+  const j = np.rebel.joined;
+  chronT('gov', `${t.name} rises against the ${polityTitle(pol)}${j ? `, and ${j === 1 ? 'a neighbouring town joins it' : j + ' neighbouring towns join it'}` : ''}.`, t);
+  // the crown marches from its nearest loyal town that can raise a host
+  let home = null, bd = 1e9;
+  for (const o of W.towns) {
+    if (o.polity !== pol || o.occupier || o.attack || o.nomad || tn(o) < 25 || W.landId[o.i] !== W.landId[t.i]) continue;
+    const d = Math.hypot(o.x - t.x, o.y - t.y);
+    if (d < bd) { bd = d; home = o; }
+  }
+  pol.truce[np.id] = 0;
+  const war = startWar(pol, np, 'revolt', home, t);
+  // and the rebels arm themselves
+  if (war && tn(t) >= 20) {
+    const a = raiseArmy(t, t, war, 'relieve', true);
+    if (a) chronT('war', `${menOf(a)} rebels take up arms in ${t.name}.`, t);
+  }
+  return war;
+}
+// Once a year while a rising lasts: it spreads, it gives up, or the crown does.
+function revoltYear(war, yr, bal) {
+  const crown = war.leadA, reb = war.leadB, age = yr - war.start;
+  if (!reb.rebel) return;
+  const seat = reb.rebel.seat;
+  if (seat && seat.alive) for (const o of W.towns) {
+    if (o.polity !== crown || o === crown.capital || o.occupier || o.attack || o.nomad) continue;
+    const d = Math.hypot(o.x - seat.x, o.y - seat.y);
+    if (d < 30 && rnd() < ((o.unrest || 0) / 100 * 0.25 + (crown.support < 30 ? 0.04 : 0)) * (1 - d / 34)) { transferTown(o, reb); chronT('gov', `${o.name} joins the ${war.name}.`, o); }
+  }
+  const held = seat && seat.alive && seat.polity === reb && !seat.occupier;
+  // the rebels lay down their arms when the crown holds their country and their hearts have gone out of it
+  if (bal > 30 && rnd() < 0.15 + war.exB * 0.6 + (held ? 0 : 0.3)) { endWar(war, 'a', 'capitulation'); return; }
+  if (!held || age < 2) return;
+  // the crown lets them go when it can't win, can't pay, is fighting someone else too, or has simply had enough
+  const busy = Object.values(crown.warsWith).some(w => w !== war);
+  const give = 0.02 + war.exA * 0.4 + Math.max(0, -bal) * 0.01 + (busy ? 0.08 : 0) + Math.max(0, age - 6) * 0.05 + Math.max(0, 30 - crown.support) * 0.01;
+  if (rnd() < give) endWar(war, 'b', 'treaty');
+}
+// How a rising ends: crushed and its towns handed back, or free, with a realm of its own and a neighbour that won't forget it.
+function revoltOver(war, winner) {
+  const crown = war.leadA, reb = war.leadB, yr = year();
+  if (!reb.rebel) return;
+  const seat = reb.rebel.seat, start = Math.floor(reb.rebel.start), towns = W.towns.filter(t => t.polity === reb);
+  const place = seat && seat.alive ? seat : crown.capital;
+  if (winner === 'a' && crown.alive) {
+    const cruel = crown.ruler && crown.ruler.alive && hasTrait(crown.ruler, 'cruel');
+    let hanged = 0;
+    for (const t of towns) {
+      if (t.occupier) liberate(t, null);
+      transferTown(t, crown);
+      t.unrest = Math.min(100, (t.unrest || 0) + 15); t.crushed = yr;
+      const n = Math.ceil(t.members.length * (cruel ? 0.05 : 0.015));
+      for (let k = 0; k < n && t.members.length; k++) { const p = t.members[rint(t.members.length)]; if (!p.leader && !p.army) { killPerson(p, 'hanged after the rising'); hanged++; } }
+      (t.risings = t.risings || []).push({ yr: start, end: Math.floor(yr), won: false, against: crown.name });
+    }
+    if (reb.ruler && reb.ruler.alive) { killPerson(reb.ruler, 'executed for leading a rising'); hanged++; }
+    crown.stab = Math.max(0, crown.stab - 4);
+    reb.rebel.over = 'crushed';
+    if (place) chronT('gov', `The ${war.name} is crushed after ${Math.max(1, Math.round(yr - war.start))} years and ${war.dead} dead, and ${towns.length > 1 ? towns.length + ' towns go' : (seat && seat.alive ? seat.name : 'the town') + ' goes'} back to the ${polityTitle(crown)}${hanged ? `. ${hanged} are hanged for it` : ''}.`, place);
+    return;
+  }
+  for (const t of towns) (t.risings = t.risings || []).push({ yr: start, end: Math.floor(yr), won: true, against: crown.name });
+  reb.rebel = null;
+  reb.rose = { from: crown.id, yr: start };
+  reb.warCool = 20;
+  if (crown.alive) {
+    crown.grudge = crown.grudge || {};
+    crown.grudge[reb.id] = { yr: Math.floor(yr), v: 60 + rint(30) };
+    crown.lost = crown.lost || {}; crown.lost[reb.id] = yr;
+    crown.stab = Math.max(0, crown.stab - 8);
+    adjustRel(crown, reb, -50);
+  }
+  if (place) chronT('gov', `${seat && seat.alive ? seat.name : reb.name} wins its freedom from the ${polityTitle(crown)} after ${Math.max(1, Math.round(yr - war.start))} years and ${war.dead} dead, and the ${polityTitle(reb)} is born. ${crown.name} will not forget it.`, place);
+}
+function secede(pol, t, r, rising) {
   const c = rnd() < 0.5 ? makeCulture(t.culture) : t.culture;
-  const np = newPolity(c, c === t.culture ? t.name : c.name);
+  const np = newPolity(c, c === t.culture || rising ? t.name : c.name);
   transferTown(t, np);
   np.capital = t; np.gov = GOV.findIndex(g => g.st === Math.min(govSt(pol), 4)); np.warCool = 25;
   np.stab = 45; np.pxp.set(pol.pxp); np.pxp.forEach((v, i) => { np.pxp[i] = v * 0.4; });
   np.crops = pol.crops.slice();
   np.cur.kind = Math.min(pol.cur.kind, 2); np.cur.name = pol.cur.name === 'goods' ? 'goods' : `${np.name.slice(0, 5).toLowerCase()} ${pick(COIN_WORD)}`; np.cur.level = 1; np.cur.value = pol.cur.value * pol.cur.level;
-  chronT('gov', `${t.name} breaks away from the ${polityTitle(pol)} and founds the ${polityTitle(np)}.`, t);
-  for (const o of W.towns) if (o !== t && o.polity === pol && o !== pol.capital && Math.hypot(o.x - t.x, o.y - t.y) < r && rnd() < 0.55) transferTown(o, np);
+  if (!rising) {
+    chronT('gov', `${t.name} breaks away from the ${polityTitle(pol)} and founds the ${polityTitle(np)}.`, t);
+    for (const o of W.towns) if (o !== t && o.polity === pol && o !== pol.capital && Math.hypot(o.x - t.x, o.y - t.y) < r && rnd() < 0.55) transferTown(o, np);
+  }
   adjustRel(pol, np, -45);
   np.known[pol.id] = 1; pol.known[np.id] = 1;
   for (const k of pol.allies) np.rel[k] = (pol.rel[k] || 0) * 0.5;
@@ -420,12 +522,12 @@ function civilWar(pol) {
   if (towns.length < 2) return;
   const far = towns.sort((a, b) => Math.hypot(b.x - pol.capital.x, b.y - pol.capital.y) - Math.hypot(a.x - pol.capital.x, a.y - pol.capital.y))[0];
   chronT('gov', `The death of the ruler of ${pol.name} sets rival heirs against each other.`, pol.capital);
-  const np = secede(pol, far, 34);
-  if (np && rnd() < 0.7 && !atWar(pol, np)) startWar(pol, np, 'civil war');
+  // the pretender's town rises, and wins its own realm only if the crown can't put it down
+  startRevolt(pol, far);
 }
 // Small polities sometimes join a strong neighbour without a fight.
 function tryUnion(t) {
-  if (t.polity.capital !== t || rnd() > 0.006) return;
+  if (t.polity.capital !== t || t.polity.rebel || rnd() > 0.006) return;
   const old = t.polity;
   // a long-standing vassal that likes its overlord is folded in by treaty; two friendly crowns can marry into one
   if (old.overlord !== null) {

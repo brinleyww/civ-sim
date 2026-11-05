@@ -58,26 +58,95 @@ const PLANS = {
   fire: 'Stand off and shoot them to pieces.',
   blitz: 'Armour straight through the middle, infantry behind.',
   mob: 'Everyone forward at once.',
+  cannae: 'Let the centre give ground, then close both wings round them.',
+  shieldwall: 'Lock shields and let them break on it.',
+  testudo: 'Shields overhead, and walk on through the arrows.',
+  phalanx: 'Deep ranks of spears, shoulder to shoulder.',
+  pikeshot: 'Pikes in squares, with the shot sheltering among them.',
+  charge: 'Couch lances and ride them down.',
+  skirmish: 'A screen of skirmishers to bleed them before the lines meet.',
+  night: 'Fall on them in the dark.',
+  ambush: 'Wait hidden in cover, and strike first.',
+  hill: 'Hold the high ground and make them climb.',
+  ford: 'Hold the river and catch them crossing.',
+  depth: 'Trench lines one behind the other: give ground, never break.',
+  barrage: 'Guns first. The infantry go in when the barrage lifts.',
+  combined: 'Infantry, guns, armour and air working together.',
+  oblique: 'Mass on one wing and refuse the other.',
 };
+const PLAN_NAME = { line: 'Battle line', hold: 'Defensive stand', flank: 'Flanking ride', envelop: 'Envelopment', feint: 'Feigned retreat', wedge: 'Wedge', fire: 'Firefight', blitz: 'Blitz', mob: 'Headlong rush', cannae: 'Double envelopment', shieldwall: 'Shield wall', testudo: 'Tortoise', phalanx: 'Phalanx', pikeshot: 'Pike and shot', charge: 'Cavalry charge', skirmish: 'Skirmisher screen', night: 'Night attack', ambush: 'Ambush', hill: 'High ground', ford: 'Holding the ford', depth: 'Defence in depth', barrage: 'Barrage', combined: 'Combined arms', oblique: 'Oblique order' };
+const HOLDING = { hold: 1, fire: 1, hill: 1, ford: 1, shieldwall: 1, depth: 1, pikeshot: 1 };
+const knowsS = (S, id) => !!(S.home && S.home.tech && TECH_IX[id] !== undefined && S.home.tech[TECH_IX[id]]);
+const hasTr = (g, L) => !!g && L.some(id => g.traits.includes(id));
+const BOLD = ['brave', 'warlike', 'ambitious', 'warhero'], SLY = ['clever', 'genius', 'wise', 'curious'], WARY = ['peaceful', 'coward', 'lazy'];
+// What a general tries depends on who they are, what they have, the age they live in, the ground, the weather and the odds.
 function pickPlan(S, E, B) {
   const g = S.general && S.general.alive ? S.general : null, lead = g ? g.leadM : 0.8;
-  let n = 0, horse = 0, shot = 0, arm = 0;
-  for (const u of S.units) { const c = u.men.length; n += c; if (u.kind === 'horse') horse += c; else if (u.kind === 'shot') shot += c; else if (u.kind === 'armor') arm += c; }
-  let e = 1; for (const u of E.units) e += u.men.length;
-  const r = n / e, home = S.home, know = id => home && home.tech[TECH_IX[id]];
-  if (!g) return 'mob';
-  if (B.town && S === B.sB) return shot > n * 0.2 ? 'fire' : 'hold';
-  if (arm > n * 0.08) return 'blitz';
-  if (shot > n * 0.55 && (know('rifle') || know('trenches'))) return 'fire';
-  if (n < 12) return 'mob';
-  if (lead >= 1.2 && r > 1.25 && n >= 30) return 'envelop';
-  if (horse > n * 0.12 && lead >= 0.95) return 'flank';
-  if (r < 0.7 && S.hill) return 'hold';
-  if (lead >= 1.25 && know('warband') && rnd() < 0.2) return 'feint';
-  if (lead >= 1.05 && n >= 20 && rnd() < 0.3) return 'wedge';
-  if (shot > n * 0.5) return 'fire';
-  if (r < 0.65) return 'hold';
-  return know('phalanx') ? 'line' : 'mob';
+  let n = 0, horse = 0, shot = 0, arm = 0, pike = 0, foot = 0;
+  for (const u of S.units) { const c = u.men.length; n += c; if (u.kind === 'horse') horse += c; else if (u.kind === 'shot') shot += c; else if (u.kind === 'armor') arm += c; else if (u.kind === 'pike') pike += c; else foot += c; }
+  let e = 1, eh = 0, es = 0;
+  for (const u of E.units) { e += u.men.length; if (u.kind === 'horse') eh += u.men.length; else if (u.kind === 'shot') es += u.men.length; }
+  const r = n / e, k = id => knowsS(S, id);
+  if (!g || n < 12) return 'mob';
+  const era = (S.pol && S.pol.era) || 0, bold = hasTr(g, BOLD), sly = hasTr(g, SLY), wary = hasTr(g, WARY);
+  const guns = S.armies.some(a => a.guns.length), defender = S === B.sB, i0 = Math.round(S.y) * W.w + Math.round(S.x);
+  if (B.town && defender) return k('trenches') ? 'depth' : shot > n * 0.2 ? 'fire' : 'hold';
+  const C = {}, add = (id, v) => { C[id] = (C[id] || 0) + v; };
+  add(r < 0.65 ? 'hold' : 'line', 1);
+  if (era < 2 && !k('phalanx')) add('mob', 1.2);
+  if (S.hill) add('hill', 1.4 + (r < 1 ? 1 : 0) + (wary ? 0.6 : 0));
+  if (B.ford === S) add('ford', 2.2 + (r < 1.2 ? 1 : 0));
+  if (arm > n * 0.08) add('blitz', 2.5 + (k('blitzkrieg') ? 1.5 : 0) + (bold ? 0.5 : 0));
+  if (era >= 7 && arm > 0 && shot > n * 0.3 && (guns || hasAir(S))) add('combined', 2.6 + (sly ? 0.8 : 0) + (k('generalstaff') ? 0.5 : 0));
+  if (guns && (k('artillery') || k('cannon'))) add('barrage', 1.6 + (wary ? 0.6 : 0) + (k('artillery') ? 0.6 : 0));
+  if (defender && k('trenches')) add('depth', 2.4 + (r < 1 ? 1 : 0));
+  if (shot > n * 0.5) add('fire', 1.4 + (k('rifle') || k('machinegun') ? 0.8 : 0) + (wary ? 0.5 : 0));
+  if (pike > n * 0.25 && shot > n * 0.15 && k('musket') && !k('rifle')) add('pikeshot', 2.2 + (eh > e * 0.1 ? 1 : 0));
+  else if (pike > n * 0.3 && k('phalanx') && era <= 4) add('phalanx', 1.9 + (eh > e * 0.1 ? 0.6 : 0));
+  if (foot > n * 0.35 && (k('shields0') || k('scutum')) && era <= 4 && !k('musket')) add(es > e * 0.25 && k('scutum') && era <= 3 && !k('knights') ? 'testudo' : 'shieldwall', 1.4 + (r < 1 ? 0.8 : 0) + (es > e * 0.25 ? 0.6 : 0));
+  if (horse > n * 0.12 && lead >= 0.95) add('flank', 1.8 + (sly ? 0.4 : 0));
+  if (horse > n * 0.15 && (k('lances') || k('knights') || k('cavalry') || k('chariot')) && !k('machinegun')) add('charge', 1.6 + (bold ? 1 : 0) + (es < e * 0.2 ? 0.5 : 0));
+  if (shot > n * 0.2 && foot + pike > n * 0.3 && era >= 1) add('skirmish', 1.1 + (sly ? 0.4 : 0));
+  if (lead >= 1.2 && r > 1.25 && n >= 30) add('envelop', 2 + (sly ? 0.5 : 0));
+  if (lead >= 1.25 && r >= 0.9 && n >= 40 && horse > n * 0.1 && (sly || k('strategy'))) add('cannae', 1.5 + (sly ? 0.8 : 0));
+  if (lead >= 1.15 && n >= 30 && (k('strategy') || era >= 5)) add('oblique', 1.2 + (sly ? 0.6 : 0) + (r < 1 ? 0.6 : 0));
+  if (lead >= 1.25 && (k('warband') || horse > n * 0.2) && era <= 4) add('feint', 1.2 + (sly ? 0.8 : 0) + (horse > n * 0.3 ? 0.6 : 0));
+  if (lead >= 1.05 && n >= 20) add('wedge', 0.9 + (bold ? 0.6 : 0));
+  if (!defender && r < 0.7 && (sly || bold)) add('night', 1.8 + (k('nightvision') ? 1.5 : 0));
+  if (!defender && (W.tree[i0] > 2 || S.hill) && (sly || k('ambush'))) add('ambush', 2 + (r < 1 ? 0.8 : 0) + (W.tree[i0] > 2 ? 0.5 : 0));
+  // rain and fog spoil shooting, snow and mud spoil a charge
+  if (B.wx === WX.RAIN || B.wx === WX.FOG) { if (C.fire) C.fire *= 0.6; if (C.skirmish) C.skirmish *= 0.6; if (C.night) C.night *= 1.3; }
+  if (B.wx === WX.SNOW && C.charge) C.charge *= 0.5;
+  let best = 'line', bs = 0;
+  for (const id in C) { const v = C[id] * (0.75 + rnd() * 0.5); if (v > bs) { bs = v; best = id; } }
+  return best;
+}
+// A line in the battle's own record (the battle panel shows the last few), and a word over the field.
+function bNote(B, text, x, y, col) {
+  (B.notes = B.notes || []).push(text);
+  if (B.notes.length > 6) B.notes.shift();
+  if (FXH && x !== undefined) FXH.word(x, y, text, col || '#ffd34d');
+}
+// The opening moves each plan makes before anyone is in reach.
+function startTactic(S, E, B) {
+  const P = S.plan, tick = W.tick, g = S.general && S.general.alive ? S.general.name : null;
+  if (P !== 'line' && P !== 'mob' && P !== 'hold') bNote(B, `${S.pol.name}: ${PLAN_NAME[P]}`, S.x, S.y, S.pol.color);
+  if (P === 'ambush') {
+    B.ambush = S;
+    for (const u of E.units) { u.coh = 0.3; for (const p of u.men) p.mor -= 15; }
+    E.pressure += 0.6;
+  } else if (P === 'night') {
+    B.nightT = tick + 90;
+    for (const u of E.units) { u.coh = 0.4; for (const p of u.men) p.mor -= 10; }
+    for (const u of S.units) u.coh = Math.min(u.coh, 0.7);
+  } else if (P === 'oblique') {
+    // the stronger wing is the one facing the enemy's weaker end
+    const side = rnd() < 0.5 ? 1 : -1;
+    for (const u of S.units) if (u.wing * side > 0 || u.kind === 'horse') u.oblique = true;
+  } else if (P === 'hill') { for (const u of S.units) for (const p of u.men) p.mor = Math.min(100, p.mor + 5); }
+  else if (P === 'depth') B.trench = S;
+  S.tacT = tick;
+  return g;
 }
 
 // ---- starting a fight ----
@@ -95,11 +164,17 @@ function addArmy(S, army, B) {
   S.men0 += army.soldiers.length;
   S.menN = (S.menN || 0) + menOf(army);
 }
-function startBattle(a, b, town) {
+// What kind of fight it is: a siege, armies blundering into each other, one host running another down, a town's people marching out
+// to meet an invader (or turning out against raiders), or a relief army falling on the besiegers.
+const BATTLE_KIND = { siege: 'A siege.', meet: 'Two armies on campaign ran into each other.', intercept: 'One army marched to stop the other on the road.', sally: 'The town marched out to meet the invaders in the field.', levy: 'The country turned out against the raiders.', relief: 'A relief army fell on the besiegers.', pursuit: 'The winners ran down a beaten army.' };
+function startBattle(a, b, town, opts) {
+  opts = opts || {};
   const B = {
     id: W.nextId++, town, x: town ? town.x : (a.x + b.x) / 2, y: town ? town.y : (a.y + b.y) / 2, start: W.tick, war: a.war, over: false, name: '', phase: 'fight', endT: 0, wx: 0, sA: null, sB: null, stage: town ? 'invest' : 'field', wallHP: null, gates: null, breaches: 0, ladders: false, loot: new Float32Array(WEAPONS.length), fallen: [], prisoners: 0, firedA: 0, ambush: false, militia: null, rec: null, hunger: 0, stageT: W.tick,
+    kind: town ? 'siege' : opts.kind || 'meet', near: opts.town || null, openT: 0, linesSide: null, result: '',
   };
-  const place = town ? town.name : nearName(B.x, B.y);
+  if (opts.ground) { B.x = (opts.ground.x + a.x) / 2; B.y = (opts.ground.y + a.y) / 2; }
+  const place = town ? town.name : opts.town ? opts.town.name : nearName(B.x, B.y);
   B.name = `${town ? 'Siege' : 'Battle'} of ${place}`;
   B.wx = weatherAt(B.x, B.y);
   B.sA = newSide(B, a.pol, a.home);
@@ -127,14 +202,33 @@ function startBattle(a, b, town) {
     B.sB = newSide(B, b.pol, b.home);
     addArmy(B.sA, a, B);
     addArmy(B.sB, b, B);
-    // ambush: a clever general hiding in the trees gets a first blow
-    const here = Math.round(a.y) * W.w + Math.round(a.x);
-    if (W.tree[here] > 2 && a.general && a.general.leadM > 1.1 && rnd() < 0.4) { B.ambush = true; for (const p of b.soldiers) p.mor -= 15; }
   }
   deploy(B.sA, B.sB, B);
   deploy(B.sB, B.sA, B);
-  B.sA.plan = pickPlan(B.sA, B.sB, B); B.sB.plan = pickPlan(B.sB, B.sA, B);
+  // defenders who chose their ground form up there: the companies march out to it, and the ridge or the river is theirs
+  if (opts.ground) {
+    const S = B.sB, ox = opts.ground.x - S.x, oy = opts.ground.y - S.y;
+    for (const u of S.units) { u.x += ox; u.y += oy; u.tx = u.x; u.ty = u.y; }
+    S.x = opts.ground.x; S.y = opts.ground.y;
+    S.hill = (W.elev[Math.round(S.y) * W.w + Math.round(S.x)] || 0) > (W.elev[Math.round(B.sA.y) * W.w + Math.round(B.sA.x)] || 0) + 0.03;
+  }
+  // a river between them: whoever got there first holds the crossing
+  if (!town) {
+    const n = Math.ceil(Math.hypot(B.sB.x - B.sA.x, B.sB.y - B.sA.y));
+    for (let q = 1; q < n; q++) { const i = Math.round(B.sA.y + (B.sB.y - B.sA.y) * q / n) * W.w + Math.round(B.sA.x + (B.sB.x - B.sA.x) * q / n); if (W.river[i] && !W.water[i]) { B.ford = B.sB; break; } }
+  }
+  if (opts.lines) B.linesSide = B.sB;
+  B.sA.plan = pickPlan(B.sA, B.sB, B); B.sB.plan = opts.lines ? 'hold' : pickPlan(B.sB, B.sA, B);
+  // in open battle the archers, slingers and skirmishers of both sides trade shots for a while before the lines close
+  if (!town) {
+    const shotA = B.sA.units.some(u => u.kind === 'shot'), shotB = B.sB.units.some(u => u.kind === 'shot');
+    if (shotA || shotB) { B.openT = W.tick + 40 + rint(40); bNote(B, 'Skirmishers open the battle'); }
+  }
+  // an ambush or a night attack takes the other side as it finds them
+  if (B.sA.plan === 'ambush' || B.sA.plan === 'night') B.sB.plan = B.sB.plan === 'hill' || B.sB.plan === 'ford' || B.sB.plan === 'depth' ? B.sB.plan : 'mob';
   applyPlan(B.sA, B); applyPlan(B.sB, B);
+  startTactic(B.sA, B.sB, B); startTactic(B.sB, B.sA, B);
+  if (town) B.siegePlan = pickSiege(B);
   B.sA.air = hasAir(B.sA); B.sB.air = hasAir(B.sB);
   W.battles.push(B);
   if (B.war) {
@@ -144,8 +238,49 @@ function startBattle(a, b, town) {
   }
   const na = B.sA.men0, nb = B.sB.men0;
   const ma = B.sA.menN || na, mb = B.sB.menN || nb;
-  if (na + nb >= 40) chron('war', town ? `${a.pol.name} lays siege to ${town.name}: ${ma} against ${mb}.` : `${B.ambush ? 'From the trees, the' : 'The'} armies of ${a.pol.name} and ${b.pol.name} meet near ${place}, in ${WX_NAME[B.wx]}: ${ma} against ${mb}.`, Math.round(B.x), Math.round(B.y), town);
+  const how = S => { const g = S.general && S.general.alive ? S.general.name : S.pol.name; return { cannae: `${g} lets the centre give way to draw them into a trap`, feint: `${g} orders a feigned retreat`, charge: `${g} sends the horse in at the charge`, ambush: `${g} springs an ambush`, night: `${g} attacks by night`, phalanx: `${g} advances in a phalanx`, pikeshot: `${g} forms pike-and-shot squares`, shieldwall: `${g} forms a shield wall`, testudo: `${g} advances under locked shields`, hill: `${g} holds the high ground`, ford: `${g} holds the river crossing`, depth: `${g} holds a defence in depth`, barrage: `${g} opens with a barrage`, combined: `${g} attacks with combined arms`, blitz: `${g} sends the armour through`, oblique: `${g} attacks in oblique order`, envelop: `${g} tries to envelop them`, flank: `${g} sends the riders round the flank`, skirmish: `${g} screens with skirmishers` }[S.plan]; };
+  const moves = [how(B.sA), how(B.sB)].filter(Boolean).join('; ');
+  // what anyone watching would notice first: the weather, the ground, the river, siege lines
+  const i0 = Math.round(B.y) * W.w + Math.round(B.x);
+  if (!town) {
+    if (B.wx !== WX.CLEAR) bNote(B, `Fought in ${WX_NAME[B.wx]}`);
+    if ((W.elev[i0] || 0) > 0.5 && W.cost[i0] > 25) { B.pass = true; bNote(B, 'Fought for the pass'); }
+    else if (B.sB.hill) bNote(B, `${b.pol.name} holds the ridge`, B.sB.x, B.sB.y, b.pol.color);
+    if (B.ford) bNote(B, 'A river between them');
+    if (B.linesSide) bNote(B, 'The besiegers fight from their lines', B.sB.x, B.sB.y, b.pol.color);
+  }
+  const lead = B.kind === 'sally' && opts.town ? `${opts.town.name} marches out to meet the invaders. ` : B.kind === 'levy' && opts.town ? `The country round ${opts.town.name} turns out against the raiders. ` : B.kind === 'relief' && opts.town ? `A relief army falls on the besiegers of ${opts.town.name}${B.linesSide ? ', who fight from behind their own siege lines' : ''}. ` : B.kind === 'intercept' ? 'One host runs the other to ground. ' : '';
+  if (na + nb >= 40) chron('war', town ? `${a.pol.name} lays siege to ${town.name}: ${ma} against ${mb}. ${SIEGE_SAY[B.siegePlan] || ''}` : `${lead}${B.sA.plan === 'ambush' ? 'From cover, the' : B.sA.plan === 'night' ? 'In the dark, the' : 'The'} armies of ${a.pol.name} and ${b.pol.name} meet near ${place}${B.pass ? ', in the pass' : ''}, in ${WX_NAME[B.wx]}: ${ma} against ${mb}.${moves ? ' ' + cap(moves) + '.' : ''}`, Math.round(B.x), Math.round(B.y), town || opts.town);
   return B;
+}
+// A town's levy goes home: gear back in the racks, people back to work.
+function disbandMilitia(m, t) {
+  for (const p of m.soldiers.slice()) { p.army = null; p.btl = null; p.unit = null; p.foe = null; p.flee = false; p.down = false; if (p.alive) { if (t && t.alive) returnGear(p, t); p.hp = Math.min(p.hpMax, Math.max(p.hp, p.hpMax * 0.5)); p.task = 0; p.st = 0; p.wake = W.tick + rint(20); p.job = p.prevJob || J.NONE; } }
+  m.soldiers.length = 0; m.units.length = 0; m.over = true; m.battle = null;
+}
+// A siege set aside while the besiegers turn to face a relief army: nobody has won, the town is free for now, everyone stands to.
+function suspendSiege(B) {
+  if (B.over) return;
+  B.over = true;
+  const k = W.battles.indexOf(B); if (k >= 0) W.battles.splice(k, 1);
+  for (const p of B.fallen) if (p.alive) { p.down = false; p.st = 0; p.wake = W.tick + rint(20); p.hp = maxHP(p) * 0.35; p.bleed = 0; }
+  B.fallen.length = 0;
+  const t = B.town;
+  if (t) { t.attack = null; if (B.militia) disbandMilitia(B.militia, t); }
+  for (const S of [B.sA, B.sB]) for (const a of S.armies) {
+    if (a.militia) continue;
+    a.battle = null; a.side = null; a.phase = a.goal === 'garrison' ? 'garrison' : 'march'; a.path = null; a.arriveT = 0;
+    for (const p of a.soldiers) { p.btl = null; p.foe = null; p.flee = false; p.down = false; p.bleed = 0; if (p.task === T_FIGHT) { p.task = T_WAR; p.step = 0; } p.st = 0; p.wake = W.tick + rint(20); if (p.hp <= 0) p.hp = 10; }
+  }
+  if (B.rec) B.rec.won = 'nobody: broken off when relief came';
+}
+// A beaten side whose general keeps hold of it doesn't run: it falls back in order, rearguard facing the enemy, and lives to fight again.
+function withdrawSide(S, E, B, tick) {
+  S.broken = true; S.withdrew = true;
+  for (const u of S.units) { if (u.order === 'rout') continue; u.order = 'advance'; u.tx = u.x - S.ux * 14; u.ty = u.y - S.uy * 14; u.withdraw = true; }
+  bNote(B, `${S.pol.name} falls back in good order`, S.x, S.y, S.pol.color);
+  B.phase = 'pursuit'; B.endT = tick + 36; B.result = 'withdrawal';
+  B.winner = S === B.sA ? 'b' : 'a';
 }
 function nearName(x, y) {
   let best = null, bd = 1e9;
@@ -222,8 +357,11 @@ function deploy(S, E, B) {
 function applyPlan(S, B) {
   const P = S.plan;
   for (const u of S.units) {
+    u.n0 = u.men.length;
     if (P === 'wedge' && u.kind === 'foot') { u.form = 'wedge'; reform(u); }
     if (S.pol && S.home && S.home.tech[TECH_IX.rifle] && u.kind !== 'horse') { u.form = 'loose'; reform(u); }
+    if ((P === 'shieldwall' || P === 'testudo' || P === 'phalanx' || P === 'pikeshot') && (u.kind === 'foot' || u.kind === 'pike')) { u.form = 'line'; reform(u); }
+    if (P === 'skirmish' && u.kind === 'shot') { u.form = 'loose'; reform(u); }
   }
   const g = S.general;
   if (g && g.alive) {
@@ -292,6 +430,23 @@ function nearestWallTile(B, x, y) {
   return best;
 }
 function wallsStand(B) { const t = B.town; return t && t.walls && t.fortHP > 0 && B.breaches === 0; }
+// How to take a town: go straight at it, sit outside until it starves, dig under the walls, or batter them down with guns.
+// A fleet off a port town cuts it off from the sea as well, whichever is chosen.
+const SIEGE_SAY = { assault: 'They mean to take it by storm.', starve: 'They mean to starve it out.', mine: 'Sappers start digging towards the walls.', bombard: 'The guns are brought up to batter the walls.' };
+function pickSiege(B) {
+  const A = B.sA, t = B.town, g = A.general && A.general.alive ? A.general : null;
+  const ratio = (A.menN || A.men0) / Math.max(1, B.sB.menN || B.sB.men0), walls = t.walls && t.fortHP > 0, guns = A.armies.some(a => a.guns.length);
+  const C = { assault: 1 + (ratio > 2 ? 1 : 0) + (ratio > 3 ? 1 : 0) + (hasTr(g, BOLD) ? 0.8 : 0) + (!walls ? 2 : 0) };
+  if (walls) C.starve = 1 + (t.stock[R.FOOD] < tn(t) * 2 ? 1.2 : 0) + (hasTr(g, WARY) || hasTr(g, SLY) ? 0.6 : 0) + (ratio < 1.5 ? 0.8 : 0);
+  if (walls && !guns && (knowsS(A, 'siegeladders') || knowsS(A, 'fortification') || knowsS(A, 'castles'))) C.mine = 1.4 + (t.fortHP > 150 ? 0.8 : 0) + (hasTr(g, SLY) ? 0.5 : 0);
+  if (walls && guns) C.bombard = 1.6 + (knowsS(A, 'artillery') ? 0.5 : 0);
+  let best = 'assault', bs = 0;
+  for (const k in C) { const v = C[k] * (0.8 + rnd() * 0.4); if (v > bs) { bs = v; best = k; } }
+  // a port town with the enemy's warships offshore gets nothing in by sea
+  if (t.portLv) { let n = 0; for (const s of W.ships) if (s.pol === A.pol && s.kind === 'war' && !s.sunk) n++; if (n >= 2) { B.blockade = true; bNote(B, 'The fleet closes the harbour'); } }
+  bNote(B, `Siege: ${{ assault: 'assault', starve: 'starve them out', mine: 'mining', bombard: 'bombardment' }[best]}`);
+  return best;
+}
 
 // ---- every soldier: find an enemy, close, strike, hold your nerve ----
 const _ga = new Map(), _gb = new Map();
@@ -392,7 +547,7 @@ function soldierAct(p, B, S, E, G, tick) {
       if (tick >= p.cdT) strike(p, e, B, S, E, wp, d2);
       if (wp.kind > 0 || d2 <= 2.4) return;
     }
-    const chase = order === 'charge' || (order === 'advance' && d2 < 16) || (order === 'hold' && d2 < 5) || (order === 'shoot' && d2 < 3);
+    const chase = order === 'charge' || (order === 'advance' && d2 < 16 && !(u && u.withdraw)) || (order === 'hold' && d2 < 5) || (order === 'shoot' && d2 < 3);
     if (chase && w0.kind === 0 || (chase && p.ammo <= 0) || (tank && order === 'charge')) {
       stepToward(p, B, e.ti % W.w, (e.ti / W.w) | 0);
       p.stam -= 0.3;
@@ -441,6 +596,21 @@ function strike(att, def, B, S, E, w, d2) {
   const rear = front < -0.5, flanked = def.foe && def.foe !== att;
   if (rear) hit *= 1.25;
   if (flanked) hit *= 1.12;
+  // what each side's plan does to the blows themselves
+  const dP = E.plan, aP = S.plan, du = def.unit, dk = du ? du.kind : '';
+  if (B.nightT > tick) hit *= ranged ? 0.45 : 0.85;
+  if (B.ambush === S && tick - B.start < 60) hit *= 1.3;
+  if (u && u.oblique) hit *= 1.15;
+  if (aP === 'combined') hit *= 1.1;
+  if (aP === 'ford' && W.river[def.ti]) hit *= 1.3;
+  if (ranged) {
+    if (!rear && dk === 'foot' && (dP === 'testudo' ? du.order !== 'charge' : dP === 'shieldwall')) hit *= dP === 'testudo' ? 0.45 : 0.75;
+    if (dP === 'skirmish' && dk === 'shot') hit *= 0.7;
+  } else {
+    if (dP === 'shieldwall' && dk === 'foot' && !rear && !flanked && rnd() < 0.25) { if (FXH) FXH.spark(dx, dy); hit = 0; }
+    if (dP === 'phalanx' && dk === 'pike') hit *= rear || flanked ? 1.35 : 0.7;
+    if (dP === 'pikeshot' && att.mount === 1 && (dk === 'pike' || dk === 'shot')) hit *= 0.5;
+  }
   if (W.occ[def.ti] === 3) hit *= 0.55;          // up on the wall
   else if (B.town && def.side === B.sB && B.town.fortHP > 0 && !inWalls(B, ax, ay)) hit *= 0.85;
   if (rnd() > hit) { if (FXH && !ranged) FXH.clash(att, def); return; }
@@ -451,7 +621,10 @@ function strike(att, def, B, S, E, w, d2) {
   let dmg = w.dmg * att.str * skill * (0.7 + rnd() * 0.6) * Math.sqrt(att.side && att.side.home ? att.side.home.mod.attack : 1) * (att.army && att.army.hpK ? att.army.hpK : 1);
   if (att.mount === 1) dmg *= 1.3;
   if (tank) dmg *= 3;
-  if (u && att.mount === 1 && u.order === 'charge' && att.st !== 1 && tick - att.sinceHit > 30) { dmg *= 1.8; if (FXH) FXH.word(ax, ay, 'Charge!', S.pol.color); att.sinceHit = tick; def.mor -= 6; }
+  if (u && att.mount === 1 && u.order === 'charge' && att.st !== 1 && tick - att.sinceHit > 30) {
+    const lance = aP === 'charge' && !(dP === 'pikeshot' || dP === 'phalanx' || (dk === 'pike' && du.order === 'hold'));
+    dmg *= lance ? 2.3 : 1.8; if (FXH) FXH.word(ax, ay, 'Charge!', S.pol.color); att.sinceHit = tick; def.mor -= lance ? 12 : 6;
+  }
   if (def.mount === 1 && w.horse) dmg *= w.horse;
   if (W.elev[att.ti] > W.elev[def.ti] + 0.02) dmg *= 1.15;
   if (rear) dmg *= 1.3;
@@ -549,6 +722,17 @@ function leaveBattle(p, B, S) {
 function takePrisoner(p, B, captor) {
   const pol = captor.pol, rul = pol.ruler && pol.ruler.alive ? pol.ruler : null;
   B.prisoners++;
+  // a captured general is a blow to the whole side, and a prize
+  const S0 = p.side;
+  if (S0 && S0.general === p) {
+    S0.general = null; S0.pressure += 0.6;
+    for (const u of S0.units) for (const q of u.men) q.mor -= 8;
+    for (const a of S0.armies) if (a.general === p) a.general = null;
+    captor.capGen = p.name;
+    bNote(B, `General ${p.name} taken!`, p.ti % W.w, (p.ti / W.w) | 0, pol.color);
+    if (S0.men0 + captor.men0 >= 30) chron('war', `${p.name}, general of ${S0.pol.name}, is taken prisoner at the ${B.name}.`, Math.round(B.x), Math.round(B.y));
+    p.fame += 1;
+  }
   if (B.war) B.war.prisoners = (B.war.prisoners || 0) + 1;
   captor.cap++;
   if (rul && hasTrait(rul, 'cruel') && rnd() < 0.6) { killPerson(p, 'executed as a prisoner'); return; }
@@ -598,31 +782,42 @@ function commandSide(S, E, B, tick) {
       if (Math.hypot(ax - u.x, ay - u.y) > 7) { u.x = lerp(u.x, ax, 0.4); u.y = lerp(u.y, ay, 0.4); }
     }
     if (fled > u.men.length * 0.55 || c === 0) {
-      if (u.order !== 'rout' && u.men.length >= 5 && FXH) FXH.word(u.x, u.y, `${u.name} break!`, '#ffffff');
+      if (u.order !== 'rout') {
+        if (u.men.length >= 5 && FXH) FXH.word(u.x, u.y, `${u.name} break!`, '#ffffff');
+        // panic runs along the line: the companies either side see them go
+        for (const o of S.units) if (o !== u && o.order !== 'rout' && (o.x - u.x) ** 2 + (o.y - u.y) ** 2 < 100) { o.coh *= 0.8; for (const p of o.men) p.mor -= 5 / p.moraleM; }
+      }
       u.order = 'rout';
       S.pressure += 0.5;
       for (const p of u.men) if (!p.flee && !p.down && rnd() < 0.5) p.mor -= 12;
     } else if (u.order === 'rout' && fled < u.men.length * 0.3) u.order = 'hold';
-    if (tick % 96 < 24 && c > 2) reform(u);
+    if (tick % 96 < 24 && c > 2) {
+      // a company in a long fight rotates its ranks: the tired step back and fresh men take the front
+      if ((u.kind === 'foot' || u.kind === 'pike') && u.form !== 'wedge' && (u.order === 'charge' || u.order === 'hold')) u.men.sort((x, y) => (y.down ? -1 : y.stam) - (x.down ? -1 : x.stam));
+      reform(u);
+    }
   }
   S.alive = alive; S.ok = ok;
   S.morale = 0; let mc = 0;
   for (const u of S.units) for (let q = 0; q < u.men.length; q += 4) { S.morale += u.men[q].mor; mc++; }
   S.morale = mc ? S.morale / mc : 0;
   // the odds weigh on everyone, a general's voice holds them up
-  const lost = (S.dead + S.down + S.cap) / Math.max(S.men0, 1), odds = (E.ok || 1) / Math.max(ok, 1);
+  // the odds in men, not figures: a figure in a big realm's army stands for a company, a townsman for a few neighbours
+  const rS = (S.menN || S.men0) / Math.max(1, S.men0), rE = (E.menN || E.men0) / Math.max(1, E.men0);
+  const lost = (S.dead + S.down + S.cap) / Math.max(S.men0, 1), odds = (E.ok || 1) * rE / Math.max(ok * rS, 1);
   let press = lost * 0.9 + Math.max(0, odds - 1.3) * 0.65;
   if (!S.general || !S.general.alive) press += 0.6;
   if (S.armies[0] && S.armies[0].starving > 0) press += 0.7;
   if (B.town && S === B.sB && B.hunger) press += 0.9;
   if (B.town && S === B.sA && tick - B.start > TPY * 3) press += 0.5;
   S.pressure = S.pressure * 0.7 + press * 0.3;
+  const age = tick - B.start, P = S.plan, town = B.town;
+  const leader = S.general && S.general.alive;
+  // losing, but still in hand: a good general breaks off and gets them away before they break
+  if (!S.broken && !town && leader && !S.encircled && age > 120 && lost > 0.22 && S.morale < 40 && S.morale >= 14 && ok > 8 && odds > 1.1 && (S.general.leadM >= 1.05 || (S.pol.era || 0) >= 5) && rnd() < 0.3) { withdrawSide(S, E, B, tick); return; }
   // a side with few left standing is finished
   if (!S.broken && (ok === 0 || (ok < S.men0 * 0.28 && E.ok > ok * 1.2) || S.morale < 12)) { breakSide(S, E, B, tick); return; }
   if (S.broken) return;
-
-  const age = tick - B.start, P = S.plan, town = B.town;
-  const leader = S.general && S.general.alive;
   for (let k = 0; k < S.units.length; k++) {
     const u = S.units[k];
     if (u.order === 'rout') continue;
@@ -637,14 +832,34 @@ function commandSide(S, E, B, tick) {
     if (u.kind === 'shot') {
       const out = u.men.every(p => p.ammo <= 0);
       if (out) u.order = 'charge';
+      else if (P === 'skirmish' && d < 6 && e.kind !== 'shot') { u.order = 'advance'; u.tx = S.x - S.ux * 3; u.ty = S.y - S.uy * 3; }  // the screen slips back behind the line
+      else if (P === 'pikeshot' && e.kind === 'horse' && d < 8) { const pk = S.units.find(o => o.kind === 'pike' && o.men.length); u.order = 'shoot'; if (pk) { u.tx = pk.x; u.ty = pk.y; } }  // in among the pikes
       else if (d < w0.rng * 0.85) { u.order = 'shoot'; u.tx = u.x; u.ty = u.y; if (d < 4 && e.kind !== 'shot') { u.tx = u.x - dx / d * 4; u.ty = u.y - dy / d * 4; u.order = 'advance'; } }
       else u.order = 'advance';
       continue;
     }
-    if (u.reserve && leader && age < 200 && !(S.morale < 40 && age > 80)) { u.order = 'hold'; u.tx = u.x; u.ty = u.y; continue; }
+    // the opening: missiles and skirmishers do the work while the main lines stand, unless the plan is to rush them
+    if (!town && tick < B.openT && u.kind !== 'horse' && d > 4 && P !== 'mob' && P !== 'night' && P !== 'ambush' && P !== 'blitz' && P !== 'charge') { u.order = 'hold'; u.tx = u.x; u.ty = u.y; continue; }
+    // the reserve goes in when the line wavers or the enemy is tiring, not before
+    if (u.reserve && leader && age < 200 && !(S.morale < 40 && age > 80) && !(E.morale < 35 && age > 100)) { u.order = 'hold'; u.tx = u.x; u.ty = u.y; continue; }
     if (u.reserve) { u.reserve = false; if (leader && FXH) FXH.word(u.x, u.y, 'The reserve!', S.pol.color); for (const p of u.men) p.mor = Math.min(100, p.mor + 6); }
-    if (u.kind === 'horse' && (P === 'flank' || P === 'envelop' || P === 'blitz') && leader) { flankOrder(u, e, E, S, d); continue; }
-    if (P === 'hold' || P === 'fire') { if (d < 7 || age > 400) u.order = 'charge'; else { u.order = 'hold'; u.tx = u.x; u.ty = u.y; } continue; }
+    if (u.kind === 'horse' && (P === 'flank' || P === 'envelop' || P === 'blitz' || P === 'cannae') && leader) { flankOrder(u, e, E, S, d); continue; }
+    if (u.kind === 'horse' && P === 'charge' && leader) { u.order = 'charge'; continue; }
+    // defence in depth: a company that has lost half its men goes back to the next line and the attackers walk into fresh fire
+    if (P === 'depth' && !u.fellBack && u.n0 && u.men.length < u.n0 * 0.55) {
+      u.fellBack = true; u.tx = u.x - S.ux * 7; u.ty = u.y - S.uy * 7; u.order = 'advance';
+      for (const p of u.men) p.mor = Math.min(100, p.mor + 8);
+      E.pressure += 0.3;
+      if (!S.saidDepth) { S.saidDepth = 1; bNote(B, 'Back to the second line', u.x, u.y, S.pol.color); }
+      continue;
+    }
+    if (u.fellBack && P === 'depth' && Math.hypot(u.tx - u.x, u.ty - u.y) > 1) continue;
+    // two sides that both mean to stand can't stand all day: whoever has the better of the shooting, or the impatient, goes in
+    if (HOLDING[P] || ((P === 'barrage' || P === 'skirmish') && age < 150)) { if (d < 7 || age > (HOLDING[E.plan] ? 160 : 260)) u.order = 'charge'; else { u.order = 'hold'; u.tx = u.x; u.ty = u.y; } continue; }
+    if (P === 'phalanx' || P === 'testudo') { u.order = d < 4 ? 'charge' : 'advance'; continue; }
+    if (P === 'oblique' && !u.oblique && age < 260) { u.order = d < 5 ? 'charge' : 'hold'; if (u.order === 'hold') { u.tx = u.x; u.ty = u.y; } continue; }
+    if (P === 'cannae' && Math.abs(u.wing) <= 3 && age < 150) { u.order = 'advance'; u.tx = u.x - S.ux * 2; u.ty = u.y - S.uy * 2; continue; }  // the centre bends back
+    if (P === 'cannae' && Math.abs(u.wing) > 3) { const sd = u.wing > 0 ? 1 : -1, q = E.x - sd * S.uy * 7 + S.ux * 2, r = E.y + sd * S.ux * 7 + S.uy * 2; u.tx = q; u.ty = r; u.order = d < 5 ? 'charge' : 'advance'; continue; }
     if (P === 'feint' && age < 110) {
       // the centre falls back in good order and draws them in
       u.order = 'advance'; u.tx = u.x - S.ux * 3; u.ty = u.y - S.uy * 3;
@@ -654,7 +869,23 @@ function commandSide(S, E, B, tick) {
     if (P === 'wedge' && E.general && E.general.alive && E.general.unit) { const g = E.general.unit; u.tx = g.x; u.ty = g.y; u.order = d < 8 ? 'charge' : 'advance'; continue; }
     u.order = d < 7 || P === 'mob' ? 'charge' : 'advance';
   }
-  if (P === 'feint' && age >= 110 && age < 140 && leader && FXH && age % 24 < 3) FXH.word(S.x, S.y, 'Turn and strike!', S.pol.color);
+  // the feint turns: whoever chased them is strung out, and caught
+  if (P === 'feint' && leader && age >= 110 && !S.turned) {
+    S.turned = 1; bNote(B, 'Turn and strike!', S.x, S.y, S.pol.color);
+    for (const o of E.units) if (o.order === 'charge' || o.order === 'advance') { o.coh *= 0.5; for (const p of o.men) p.mor -= 8; }
+    E.pressure += 0.4;
+  }
+  // companies of ours behind their line: surrounded, or taken in the flank
+  if (P === 'cannae' || P === 'envelop' || P === 'flank' || P === 'blitz') {
+    let behind = 0;
+    for (const o of S.units) if (o.men.length > 3 && (o.x - E.x) * E.ux + (o.y - E.y) * E.uy < -1.5) behind++;
+    if (behind >= (P === 'cannae' || P === 'envelop' ? 2 : 1)) {
+      E.pressure += P === 'cannae' ? 0.35 : 0.2;
+      if (!E.encircled) { E.encircled = true; bNote(B, P === 'blitz' ? 'Breakthrough!' : P === 'flank' ? 'Taken in the flank!' : 'Surrounded!', E.x, E.y, S.pol.color); }
+    }
+  }
+  if (P === 'depth' && age < 500) E.pressure += 0.08;
+  if (P === 'barrage' && age >= 150 && !S.lifted) { S.lifted = 1; bNote(B, 'The barrage lifts', S.x, S.y, S.pol.color); }
   S.x = lerp(S.x, avgX(S), 0.4); S.y = lerp(S.y, avgY(S), 0.4);
 }
 const avgX = S => { let s = 0, c = 0; for (const u of S.units) { s += u.x; c++; } return c ? s / c : S.x; };
@@ -706,16 +937,24 @@ function moveUnits(S, B) {
     const i = Math.round(u.y) * W.w + Math.round(u.x);
     const terr = clamp(10 / (W.cost[i] || 10), 0.5, 1.2);
     // nobody marches faster than the company can stay together
-    const v = UNIT_SPEED[u.kind] * 6 * snow * terr * (u.order === 'charge' ? 1.5 : 1) * (0.5 + u.coh * 0.5) * (u.order === 'hold' ? 0.5 : 1);
+    // out of reach of each other, companies close the distance at the march; within it, they keep their order
+    const v = UNIT_SPEED[u.kind] * 6 * snow * terr * (u.order === 'charge' ? 1.5 : 1) * (u.order === 'advance' && d > 8 && !u.withdraw ? 1.8 : 1) * (0.5 + u.coh * 0.5) * (u.order === 'hold' ? 0.5 : 1) * (S.plan === 'testudo' && u.kind === 'foot' && u.order !== 'charge' ? 0.7 : 1);
     u.x += dx / d * Math.min(v, d); u.y += dy / d * Math.min(v, d);
   }
 }
 function breakSide(S, E, B, tick) {
   S.broken = true;
   if (FXH) FXH.word(S.x, S.y, `${S.pol.name} break!`, '#ffffff');
+  // a surrounded army has nowhere to run, and much of it throws down its arms
+  let gave = 0;
+  if (S.encircled) for (const u of S.units) for (const p of u.men.slice()) if (!p.flee && !p.down && p.alive && rnd() < 0.3) { takePrisoner(p, B, E); gave++; }
+  if (gave >= 5) bNote(B, `${gave} surrounded men surrender`, S.x, S.y, '#ffffff');
   for (const u of S.units) { u.order = 'rout'; for (const p of u.men) if (!p.flee && !p.down) startFlee(p, S, E); }
-  B.phase = 'pursuit'; B.endT = tick + 45 + (E.units.some(u => u.kind === 'horse') ? 40 : 0);
+  const riders = E.units.some(u => (u.kind === 'horse' || u.kind === 'armor') && u.men.length > 2);
+  if (riders) bNote(B, E.units.some(u => u.kind === 'armor' && u.men.length) ? 'The armour runs them down' : 'The horse ride them down', S.x, S.y, E.pol.color);
+  B.phase = 'pursuit'; B.endT = tick + 45 + (riders ? 40 : 0);
   B.winner = S === B.sA ? 'b' : 'a';
+  B.result = S.encircled ? 'encircled' : 'rout';
 }
 
 // ---- engines, shells and bombers ----
@@ -764,7 +1003,7 @@ function enginesStep(S, E, B, tick) {
       if (!best) { if (t && S === B.sA) { const d = Math.hypot(t.x - g.x, t.y - g.y); if (d > D.rng - 2) { g.x += (t.x - g.x) / d * 0.3; g.y += (t.y - g.y) / d * 0.3; } } continue; }
       tx0 = best.x + (rnd() - 0.5) * 5; ty0 = best.y + (rnd() - 0.5) * 5;
     } else if (Math.hypot(tx0 - g.x, ty0 - g.y) > D.rng) { const d = Math.hypot(tx0 - g.x, ty0 - g.y); g.x += (tx0 - g.x) / d * 0.3; g.y += (ty0 - g.y) / d * 0.3; continue; }
-    g.cool = tick + D.cd * (B.wx === WX.RAIN && D.id === 'cannon' ? 1.5 : 1);
+    g.cool = tick + D.cd * (B.wx === WX.RAIN && D.id === 'cannon' ? 1.5 : 1) * (S.plan === 'barrage' && tick - B.start < 160 ? 0.5 : 1);
     g.fireT = tick; g.tx = tx0; g.ty = ty0;
     shot(g.x, g.y, tx0, ty0, 3);
     if (FXH && (D.id === 'cannon' || D.id === 'artillery' || D.id === 'rocketarty')) FXH.muzzle(g.x, g.y, tx0, ty0, true);
@@ -802,7 +1041,8 @@ function airStep(S, E, B, tick) {
     if (FXH) FXH.plane(S.x, S.y, u.x, u.y, S.pol.color, down);
     if (!down) for (let q = 0; q < 3; q++) shellHit(B, E, S, u.x + (rnd() - 0.5) * 4, u.y + (rnd() - 0.5) * 4, 35);
   }
-  if (!S.air || tick - S.lastAir < (S.drones ? 60 : 90)) return;
+  if (!S.air || tick - S.lastAir < (S.drones ? 60 : 90) * (S.plan === 'combined' ? 0.7 : 1)) return;
+  if (!S.saidAir) { S.saidAir = 1; bNote(B, S.drones ? 'Drones overhead' : 'Air support', S.x, S.y, S.pol.color); }
   S.lastAir = tick;
   // flak and fighters may get them first; drones are small and hard to hit
   const lose = (E.fighters ? 0.6 : E.air ? 0.35 : 0) * (S.drones ? 0.5 : 1);
@@ -818,24 +1058,55 @@ function airStep(S, E, B, tick) {
 function siegeStep(B, tick) {
   const t = B.town, A = B.sA, D = B.sB;
   // the defenders' stores go down, and when they run out everyone knows
+  const plan = B.siegePlan || 'bombard';
   if (t.alive) {
-    t.stock[R.FOOD] = Math.max(0, t.stock[R.FOOD] - tn(t) * 0.03 * (t.count.granary ? 0.75 : 1));
+    // ringed tight and nothing let through, or a fleet offshore as well: the stores go faster
+    const drain = (plan === 'starve' ? 1.6 : 1) * (B.blockade ? 1.4 : 1) * (B.lines ? 1.2 : 1);
+    t.stock[R.FOOD] = Math.max(0, t.stock[R.FOOD] - tn(t) * 0.03 * drain * (t.count.granary ? 0.75 : 1));
     B.hunger = t.stock[R.FOOD] < 1 ? (B.hunger || 0) + 1 : 0;
+    if (B.blockade && t.portLv) t.blockaded = Math.max(t.blockaded || 0, tick + 60);
+  }
+  // a long siege by a people who know how digs in: a ring of earthworks facing the town, and another facing outward against relief
+  if (B.stage === 'invest' && !B.lines && tick - B.start > 150 && A.ok > 25 && (knowsS(A, 'engineering') || knowsS(A, 'fortification') || (A.pol.era || 0) >= 3)) {
+    B.lines = true;
+    bNote(B, 'The besiegers dig lines round the town', t.x, t.y, A.pol.color);
+    if (A.men0 + D.men0 >= 60) chronT('war', `The besiegers of ${t.name} dig themselves in: a ring of trenches and stakes round the town, and another facing outward against any relief.`, t);
   }
   if (B.stage === 'invest') {
     // fire from the walls? stone at the gates? ladders at the ready? the attackers make up their minds
     // the odds in men, not figures: a big realm's figures stand for whole companies
     const rA = (A.menN || A.men0) / Math.max(1, A.men0), rD = (D.menN || D.men0) / Math.max(1, D.men0);
     const ratio = (A.ok || 1) * rA / Math.max((D.ok || 1) * rD, 1), wait = tick - B.stageT;
+    // the sappers' tunnel: when it's under the wall they fire it, unless the defenders dig in from the other side first
+    if (plan === 'mine' && t.walls && B.breaches < 2) {
+      B.mine = (B.mine || 0) + 1;
+      if (B.mine >= 10) {
+        B.mine = 0;
+        const counter = (knowsS(D, 'fortification') || knowsS(D, 'castles') || knowsS(D, 'siegeladders')) && rnd() < 0.35;
+        if (counter) {
+          for (let q = 0; q < 3; q++) { const u = A.units[rint(A.units.length)]; const v = u && u.men[rint(u.men.length)]; if (v && v.alive) soldierFalls(v, null, B, D, A, 'killed in a collapsing mine'); }
+          bNote(B, 'Countermined! The tunnel caves in', t.x, t.y, D.pol.color);
+        } else {
+          const wt = nearestWallTile(B, A.x, A.y);
+          if (wt >= 0) { hitWall(B, wt, 1e6); if (FXH) FXH.boom(wt % W.w, (wt / W.w) | 0, 3); }
+          B.breaches = Math.max(B.breaches + 1, 2); t.fortHP = Math.max(0, t.fortHP - t.fortMax * 0.25);
+          bNote(B, 'The mine is fired under the wall', t.x, t.y, A.pol.color);
+          if (A.men0 + D.men0 >= 30) chronT('war', `Sappers of ${A.pol.name} fire a mine under the walls of ${t.name}, and a whole stretch comes down.`, t);
+        }
+      }
+    }
     const open = !t.walls || t.fortHP <= 0 || B.breaches >= 2;
     const guns = A.armies.some(a => a.guns.length);
-    if (open || (wait > 140 && ratio >= 1.5) || (!guns && wait > 240) || wait > 520) {
+    const storm = plan === 'assault' ? open || (wait > 60 && ratio >= 1.2) || wait > 220
+      : plan === 'starve' ? (open && ratio >= 2) || B.hunger > 5 || wait > 1000
+      : open || (wait > 140 && ratio >= 1.5) || (!guns && wait > 240) || wait > 520;
+    if (storm) {
       B.stage = 'storm'; B.stageT = tick;
       if (FXH) FXH.word(t.x, t.y, 'Storm the town!', A.pol.color);
       if (A.men0 + D.men0 >= 40) chronT('war', `${A.pol.name} storms ${t.name}${B.breaches ? ' through the breach' : ' with ladders'}.`, t);
       for (const u of A.units) for (const p of u.men) p.mor = Math.min(100, p.mor + 5);
     }
-    if (B.hunger > 8 && rnd() < 0.2 && D.morale < 45) { breakSide(D, A, B, tick); chronT('war', `${t.name} starves, and gives up.`, t); return; }
+    if (!D.broken && B.hunger > (plan === 'starve' ? 4 : 8) && rnd() < (plan === 'starve' ? 0.35 : 0.2) && D.morale < (plan === 'starve' ? 55 : 45)) { breakSide(D, A, B, tick); chronT('war', `${t.name} starves, and gives up.`, t); return; }
   } else if (t.alive) {
     // fire spreads through streets being fought over; those who didn't get indoors are in the way
     if (rnd() < 0.3 && t.blds.length > 1) {
@@ -865,7 +1136,8 @@ function battleStep(B) {
     B.wx = (tick + B.id) % 240 === 0 ? weatherAt(B.x, B.y) : B.wx;
     commandSide(A, D, B, tick);
     commandSide(D, A, B, tick);
-    B.trench = D.home && D.home.tech[TECH_IX.trenches] && D.plan !== 'mob' && tick - B.start > 60 ? D : A.home && A.home.tech[TECH_IX.trenches] && A.plan === 'fire' ? A : null;
+    if (B.openT && tick >= B.openT && !B.saidClose) { B.saidClose = 1; bNote(B, 'The main lines close', B.x, B.y, '#ffd34d'); }
+    B.trench = B.linesSide && !B.linesSide.broken ? B.linesSide : D.plan === 'depth' ? D : A.plan === 'depth' ? A : D.home && D.home.tech[TECH_IX.trenches] && D.plan !== 'mob' && tick - B.start > 60 ? D : A.home && A.home.tech[TECH_IX.trenches] && A.plan === 'fire' ? A : null;
     if (FXH && B.trench && tick % 96 === B.id % 96) FXH.trench(B.trench);
     if (B.over) return;
   }
@@ -889,13 +1161,14 @@ function battleStep(B) {
       }
     }
     if (pursuit && S.broken) {
-      // whoever's caught throws down their weapon, or doesn't get the chance
+      // whoever's caught throws down their weapon, or doesn't get the chance; riders catch more, and nobody gets out of a ring
+      const capR = S.encircled ? 0.75 : E.units.some(u => u.kind === 'horse' && u.men.length) ? 0.55 : 0.4;
       for (let k = S.units.length - 1; k >= 0; k--) {
         const M = S.units[k] && S.units[k].men;
         if (!M) continue;
         for (let q = M.length - 1; q >= 0; q--) {
           const p = M[q];
-          if (p && p.alive && p.flee && p.hitT === tick && rnd() < 0.4) takePrisoner(p, B, E);
+          if (p && p.alive && p.flee && p.hitT === tick && rnd() < capR) takePrisoner(p, B, E);
         }
       }
     }
@@ -935,8 +1208,10 @@ function battleEnd(B, winner, forced) {
   }
   // the winners hold the ground, so they get their own wounded back, and the other side's
   const mend = S => (S.home && S.home.count.fieldhospital ? 0.3 : 0) + (S.home && S.home.tech[TECH_IX.surgery] ? 0.2 : 0) + (S.home && S.home.tech[TECH_IX.antibiotics] ? 0.25 : 0);
+  let woundedN = 0;
   for (const p of B.fallen) {
     if (!p.alive) continue;
+    woundedN += p.army && p.army.rep ? p.army.rep : 1;
     p.down = false; p.st = 0; p.wake = W.tick + rint(20); p.hp = maxHP(p) * 0.35; p.bleed = 0;
     if (p.side === Wn || forced) {
       if (rnd() < 0.3 + mend(p.side)) { if (rnd() < 0.5 && addTrait(p, 'scarred')) plog(p, `Badly wounded at the ${B.name}, and lived.`); else if (rnd() < 0.3 && addTrait(p, 'lame')) plog(p, `Lost the use of a leg at the ${B.name}.`); }
@@ -944,6 +1219,7 @@ function battleEnd(B, winner, forced) {
     } else if (rnd() < 0.5) takePrisoner(p, B, Wn);
     else { if (war && p.army) war.dead += p.army.rep || 1; militiaLost(p); killPerson(p, 'died of wounds'); }
   }
+  B.wounded = woundedN;
   B.fallen.length = 0;
   // what was dropped on the field
   const wT = Wn.home, lT = Ls.home;
@@ -981,15 +1257,26 @@ function battleEnd(B, winner, forced) {
     }
     return;
   }
-  if (forced) { for (const a of A.armies.concat(D.armies)) endArmy(a); return; }
-  if (dead >= 10) chron('war', `${Wn.pol.name} wins the ${B.name}: ${dead} dead${B.prisoners ? `, ${B.prisoners} prisoners` : ''}, and ${Ls.pol.name} in flight. ${planWord(Wn.plan)}`, Math.round(B.x), Math.round(B.y));
-  for (const a of Ls.armies.slice()) if (!retreatArmy(a)) endArmy(a);
+  // a town's own levy goes home, whichever way it went
+  for (const a of A.armies.concat(D.armies)) if (a.militia) disbandMilitia(a, a.home);
+  if (forced) { for (const a of A.armies.concat(D.armies)) if (!a.militia) endArmy(a); return; }
+  const dW = Wn.deadMen || Wn.dead, dL = Ls.deadMen || Ls.dead;
+  const how = B.result === 'withdrawal' ? `${Ls.pol.name} falls back in good order` : B.result === 'encircled' ? `${Ls.pol.name} is surrounded and cut to pieces` : `${Ls.pol.name} in flight`;
+  if (B.rec) B.rec.result = B.result || 'rout';
+  if (dead >= 10) chron('war', `${Wn.pol.name} wins the ${B.name}: ${dL} of theirs dead to ${dW} of the winners'${B.wounded ? `, ${B.wounded} wounded` : ''}${B.prisoners ? `, ${B.prisoners} taken prisoner` : ''}, and ${how}. ${planWord(Wn.plan)}`, Math.round(B.x), Math.round(B.y));
+  const fled = [];
+  for (const a of Ls.armies.slice()) { if (a.militia) continue; if (retreatArmy(a)) fled.push(a); else endArmy(a); }
+  // horse that has won the day rides after a beaten army; one that withdrew in order is harder to catch
+  const riders = Wn.units.some(u => (u.kind === 'horse' || u.kind === 'armor') && u.men.length >= 4);
   for (const a of Wn.armies.slice()) {
+    if (a.militia || a.over) continue;
     a.morale = Math.min(95, a.morale + 8); a.wins++;
     if (a.goal === 'garrison') { a.phase = 'garrison'; for (const p of a.soldiers) { p.task = T_WAR; p.step = 0; } continue; }
-    if (a.goal === 'relieve' || a.goal === 'intercept') { if (!nextObjective(a)) endArmy(a); continue; }
+    if (a.goal === 'relieve' || a.goal === 'intercept') { if (B.kind === 'relief' && B.near && B.near.alive) { a.morale = Math.min(95, a.morale + 6); if (dead >= 10) chronT('war', `The siege of ${B.near.name} is lifted.`, B.near); } if (!nextObjective(a)) endArmy(a); continue; }
     a.phase = 'march'; a.path = null; a.arriveT = 0;
     for (const p of a.soldiers) { p.task = T_WAR; p.step = 0; p.st = 0; p.wake = W.tick + rint(30); }
+    if (fled.length && riders && B.result !== 'withdrawal' && rnd() < 0.7) { a.chase = fled[0]; a.chaseUntil = W.tick + 120; a.chaseT = 0; if (menOf(a) >= 100) chron('war', `The ${a.name} rides after the beaten ${fled[0].name}.`, Math.round(B.x), Math.round(B.y)); }
   }
 }
-const planWord = P => ({ flank: 'Their riders decided it.', envelop: 'The wings closed in and that was that.', feint: 'The false retreat worked.', wedge: 'The wedge went straight through.', fire: 'Nobody got close enough to matter.', blitz: 'The armour went through them.', hold: 'They held their ground and let the enemy break.', line: '', mob: '' })[P] || '';
+const planWord = P => ({ flank: 'Their riders decided it.', envelop: 'The wings closed in and that was that.', feint: 'The false retreat worked.', wedge: 'The wedge went straight through.', fire: 'Nobody got close enough to matter.', blitz: 'The armour went through them.', hold: 'They held their ground and let the enemy break.', line: '', mob: '',
+  cannae: 'The centre gave way, the wings closed, and the enemy died in the ring.', shieldwall: 'The shield wall never broke.', testudo: 'The arrows rattled off the shields.', phalanx: 'Nothing got past the spears.', pikeshot: 'The horse broke on the squares.', charge: 'The charge swept them away.', skirmish: 'The skirmishers bled them before the lines ever met.', night: 'The night attack caught them asleep.', ambush: 'The ambush did it.', hill: 'They held the high ground and the enemy spent itself climbing.', ford: 'They caught the enemy in the river.', depth: 'Every line taken was another line to take.', barrage: 'The guns did the work.', combined: 'Guns, armour, air and infantry together.', oblique: 'The strong wing rolled up the line.' })[P] || '';

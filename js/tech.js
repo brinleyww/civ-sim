@@ -167,7 +167,7 @@ const RECIPES = {
   weaver: [{ in: {}, out: { [R.CLOTH]: 2 }, tech: 'weaving' }],
   smelter: [
     { in: { [R.COPPER]: 2, [R.WOOD]: 2 }, out: { [R.BRONZE]: 1 }, tech: 'copper', not: 'bronze' },
-    { in: { [R.COPPER]: 2, [R.TIN]: 1, [R.WOOD]: 2 }, out: { [R.BRONZE]: 3 }, tech: 'bronze' },
+    { in: { [R.COPPER]: 2.6, [R.TIN]: 0.4, [R.WOOD]: 2 }, out: { [R.BRONZE]: 3 }, tech: 'bronze' },  // about one part tin to seven of copper
     { in: { [R.IRON]: 2, [R.WOOD]: 3 }, out: { [R.STEEL]: 2 }, tech: 'iron', not: 'blast' },
     { in: { [R.IRON]: 2, [R.COAL]: 1 }, out: { [R.STEEL]: 3 }, tech: 'blast' },
   ],

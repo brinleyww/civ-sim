@@ -129,9 +129,35 @@ function campDeath(army, v, cause) {
 // and at last small professional forces with machines doing the work. Total war squeezes out more.
 function levyShare(t, pol) {
   const e = pol.era || 0, g = GOV[pol.gov], mob = pol.mob || 0;
-  const base = e <= 1 ? 0.5 : e <= 3 ? 0.32 : e === 4 ? 0.28 : e === 5 ? 0.34 : e <= 7 ? 0.4 : 0.2;
-  const surge = e <= 1 ? 0.3 : e <= 5 ? 0.7 : e <= 7 ? 1.7 : 0.9;
-  return clamp(base * (1 + mob * surge) * g.cons * (t.count.barracks ? 1.15 : 1) * (t.mod.conscript || 1), 0.04, 0.62);
+  const base = e <= 1 ? 0.6 : e <= 3 ? 0.45 : e === 4 ? 0.42 : e === 5 ? 0.5 : e <= 7 ? 0.55 : 0.3;
+  const surge = e <= 1 ? 0.3 : e <= 5 ? 0.6 : e <= 7 ? 1.2 : 0.9;
+  return clamp(base * (1 + mob * surge) * g.cons * (t.count.barracks ? 1.15 : 1) * (t.mod.conscript || 1), 0.08, 0.8);
+}
+// Buildings soldiers live by in peace and fall in at in war (society.js puts them in t.forts, where standing soldiers drill).
+const MIL_BASE = { barracks: 1, drillyard: 1, fort: 1, castle: 1, citadel: 1, starfort: 1, warcollege: 1, armoury: 1, supplydepot: 1 };
+// Where a town's soldiers fall in: its barracks, drill yard or fort if it has one (the one nearest the enemy), otherwise open ground
+// at the edge of town on the side facing the enemy. Never the middle of town.
+function rallyPoint(t, target) {
+  let best = null, bs = -1e9;
+  for (const b of t.forts) {
+    if (!b.done || b.ruin || !MIL_BASE[b.type]) continue;
+    const s = (b.type === 'barracks' || b.type === 'drillyard' ? 2 : 1) - (target ? Math.hypot(b.x - target.x, b.y - target.y) * 0.02 : 0);
+    if (s > bs) { bs = s; best = b; }
+  }
+  if (best) { const c = best.i + (best.size >> 1) * (W.w + 1); for (let k = 0; k < 8; k++) { const j = nearTile(c, best.size + 1); if (W.occ[j] !== 1 && W.occ[j] !== 3) return j; } return c; }
+  let dx = 1, dy = 0;
+  if (target && target !== t) { const d = Math.hypot(target.x - t.x, target.y - t.y) || 1; dx = (target.x - t.x) / d; dy = (target.y - t.y) / d; }
+  for (let r = clamp(Math.round((t.radius || 13) * 0.55), 5, 14); r >= 3; r -= 2) {
+    const x = Math.round(t.x + dx * r), y = Math.round(t.y + dy * r);
+    if (x < 1 || y < 1 || x >= W.w - 1 || y >= W.h - 1) continue;
+    const i = y * W.w + x;
+    if (!W.water[i] && W.landId[i] === W.landId[t.i]) { const j = nearTile(i, 2); return W.occ[j] === 1 || W.occ[j] === 3 ? i : j; }
+  }
+  return nearTile(t.i, 5);
+}
+// Saves from before the bases counted: put a town's barracks and the like on its soldiers' list of places to drill.
+function syncBases(t) {
+  for (const b of t.blds) if (b.done && !b.ruin && MIL_BASE[b.type] && !t.forts.includes(b)) t.forts.push(b);
 }
 // Who can be called up: before the modern age, men only.
 const callable = (p, e) => { const v = ageOf(p); return v >= 16 && v < 48 && (e >= 7 || p.sex === 1 || p.job === J.SOLDIER) && !p.army && !p.leader && p.task !== T_MIGRATE && !p.aboard && !p.btl && !W.water[p.ti]; };
@@ -175,56 +201,119 @@ const GOALS = {
   'civil war': { text: 'in civil war', ask: 'fights for', annex: 1, total: 1 },
   provoked: { text: 'for reasons nobody can quite recall', ask: 'marches on', annex: 1 },
   debts: { text: 'to collect what it is owed', ask: 'comes to collect from', vassal: 1 },
+  revolt: { text: 'to put down a rising', ask: 'marches to crush', annex: 1, total: 1 },
+  reconquest: { text: 'to take back what broke away', ask: 'means to take back', annex: 1 },
 };
 const CAUSE_TEXT = {}; for (const k in GOALS) CAUSE_TEXT[k] = GOALS[k].text;
+// How short of room a realm is, from 0 (plenty) to about 2: towns that keep failing to find a spot to build, farm families with
+// no fields left, colonists with nowhere left to go, and towns packed past what they can hold. Worked out once a year.
+function landHunger(pol) {
+  const yr = Math.floor(year());
+  if (pol.lhY === yr) return pol.lh;
+  let s = 0, w = 0, worst = null, ws = 0;
+  for (const t of W.towns) {
+    if (t.polity !== pol || t.nomad || t.occupier) continue;
+    const n = Math.sqrt(tn(t)), M = t.spotMissN;
+    let h = 0;
+    if (M) { let m = 0; for (const k in M) if (M[k] > m) m = M[k]; h += m * 0.18; }
+    if (t.pushWhy === 'land') h += 0.45;
+    if (t.noSiteY >= yr - 3) h += 0.5;
+    h += clamp((t.crowd || 0) - 0.95, 0, 0.5);
+    s += h * n; w += n;
+    if (h * n > ws) { ws = h * n; worst = t; }
+  }
+  pol.lhY = yr; pol.lh = w ? s / w : 0; pol.lhTown = worst;
+  return pol.lh;
+}
+const MOTIVE_NAME = { land: 'Short of land', hunger: 'Hungry', raid: 'Plunder', tin: 'Wants tin', iron: 'Wants iron', oil: 'Wants oil', revenge: 'Revenge for a lost war', holy: 'Holy war', tribute: 'Tribute from the weak', empire: 'Empire', 'old hatred': 'Old hatred', reconquest: 'Reconquest of a breakaway', debts: 'Unpaid debts', strength: 'Stronger, and close', foreign: 'Different people' };
+// Why `pol` might attack town `o` from its town `a`: the score considerWar compares, the cause it would give, and each motive's
+// weight, so the realm panel can show exactly what the rulers are weighing. Null if it wouldn't, or couldn't.
+function warMotive(pol, a, o, ctx) {
+  const foe = o.polity, yr = ctx.yr;
+  if (foe === pol || o.attack || o.occupier || (pol.truce[foe.id] > yr) || areAllies(pol, foe) || pol.overlord === foe.id || foe.overlord === pol.id) return null;
+  const d = Math.hypot(o.x - a.x, o.y - a.y);
+  const reach = 34 + govSt(pol) * 7 + a.mod.admin * 0.5 + (a.mod.speed > 1 ? 10 : 0) + (a.navy ? 30 : 0);
+  if (d > reach) return null;
+  if (W.landId[o.i] !== W.landId[a.i] && a.portLv < 2) return null;
+  // a sensible ruler counts the other side's friends as well
+  let friends = 0;
+  for (const k of foe.allies) { const f = W.polities[k]; if (f && f.alive) friends += f.pop * 0.4; }
+  const power = (tn(a) * a.mod.attack * a.toolMul) / (defPower(o) * o.toolMul + friends * 0.25 + 1);
+  const gr = grudgeOf(pol, foe), lh = ctx.lh;
+  // a realm with no room left will take on a neighbour it would otherwise leave alone
+  if (power < (gr > 20 ? 0.85 : lh > 0.6 ? 0.9 : 1.1)) return null;
+  const rel = relOf(pol, foe);
+  const parts = [];
+  let s = power * 2 + 22 / (d + 6);
+  parts.push(['strength', s]);
+  const mul = (k, m) => { if (m !== 1) { s *= m; parts.push([k, m]); } };
+  s *= clamp(1 - rel / 50, 0.1, 2.4);
+  if (ctx.nukes.has(foe.id)) s *= ctx.nukes.has(pol.id) ? 0.15 : 0.35;
+  if (inAssembly(pol) && inAssembly(foe)) s *= 0.6;
+  if (o.nomad) s *= 0.5;
+  if (o.culture !== a.culture) mul('foreign', 1.2);
+  if (a.famine) mul(o.stock[R.FOOD] > tn(o) * 2 ? 'hunger' : 'raid', 1.5);
+  // land hunger: the more cramped the realm, the more it wants the neighbour's open farmland, near and lightly held
+  if (lh > 0.25 || pol.crowdMax > 1.05) mul('land', (1 + Math.max(lh - 0.15, pol.crowdMax > 1.05 ? 0.25 : 0) * 0.9) * clamp(0.7 + (o.sArable.length + o.fields.length * 0.5) / 120, 0.7, 1.6) * clamp(30 / (d + 15), 0.6, 1.4));
+  if (knows(a, 'bronze') && o.near.tin > 0 && a.near.tin === 0) mul('tin', 1.6);
+  if (knows(a, 'iron') && o.near.iron > 0 && a.near.iron === 0) mul('iron', 1.3);
+  if (knows(a, 'combustion') && o.near.oil > 0 && a.near.oil === 0) mul('oil', 1.5);
+  if (pol.lost && pol.lost[foe.id] > yr - 60) mul('revenge', 1.7);
+  if (pol.fac[2] > 0.3 && o.culture.id !== a.culture.id) mul('holy', 1.1);
+  if (foe.pop < pol.pop * 0.35) mul('tribute', 1.05);
+  if (pol.nodes.includes('con3') && foe.pop < pol.pop * 0.7) mul('empire', 1.3);
+  if (rel < -40) mul('old hatred', 1 + (-40 - rel) / 120);
+  if (gr > 0) mul('reconquest', 1 + gr / 40);
+  if (pol.unpaidBy && pol.unpaidBy[foe.id] > 200) mul('debts', 1.4);
+  // the cause it gives is whichever motive weighs most; plain advantage is a war 'over land'
+  let why = 'land', bw = 1.0001;
+  for (const [k, m] of parts) if (k !== 'strength' && k !== 'foreign' && m > bw) { bw = m; why = k; }
+  return { s, why, parts, power, d, o };
+}
+function warCtx(pol) {
+  const nukes = new Set(); for (const t of W.towns) if (t.count.missilesilo && t.tech[TECH_IX.nuclear]) nukes.add(t.polity.id);
+  return { yr: year(), nukes, lh: landHunger(pol) };
+}
+const warLust = pol => { const g = GOV[pol.gov], rul = pol.ruler && pol.ruler.alive ? pol.ruler : null; return g.war * (rul ? rul.warM : 1) * (pol.capital ? pol.capital.mod.war || 1 : 1) * (1 - clamp(pol.warTired || 0, 0, 0.8)); };
 function considerWar(pol) {
-  const g = GOV[pol.gov];
   const towns = W.towns.filter(t => t.polity === pol && !t.nomad && !t.occupier);
   if (!towns.length) return;
-  const rul = pol.ruler && pol.ruler.alive ? pol.ruler : null;
-  const lust = g.war * (rul ? rul.warM : 1) * (pol.capital ? pol.capital.mod.war || 1 : 1) * (1 - clamp(pol.warTired || 0, 0, 0.8));
+  const lust = warLust(pol);
   const a = pick(towns);
   if (tn(a) < 32 || a.attack) return;
-  const yr = year();
-  let best = null, bs = 0, cause = '';
-  // nobody lightly attacks a realm that has the bomb, least of all a realm that has one too
-  const nukes = new Set(); for (const t of W.towns) if (t.count.missilesilo && t.tech[TECH_IX.nuclear]) nukes.add(t.polity.id);
-  for (const o of W.towns) {
-    const foe = o.polity;
-    if (foe === pol || o.attack || o.occupier || (pol.truce[foe.id] > yr) || areAllies(pol, foe) || pol.overlord === foe.id || foe.overlord === pol.id) continue;
-    const d = Math.hypot(o.x - a.x, o.y - a.y);
-    const reach = 34 + govSt(pol) * 7 + a.mod.admin * 0.5 + (a.mod.speed > 1 ? 10 : 0) + (a.navy ? 30 : 0);
-    if (d > reach) continue;
-    if (W.landId[o.i] !== W.landId[a.i] && a.portLv < 2) continue;
-    // a sensible ruler counts the other side's friends as well
-    let friends = 0;
-    for (const k of foe.allies) { const f = W.polities[k]; if (f && f.alive) friends += f.pop * 0.4; }
-    const power = (tn(a) * a.mod.attack * a.toolMul) / (defPower(o) * o.toolMul + friends * 0.25 + 1);
-    if (power < 1.1) continue;
-    const rel = relOf(pol, foe);
-    let s = power * 2 + 22 / (d + 6), why = 'land';
-    s *= clamp(1 - rel / 50, 0.1, 2.4);
-    if (nukes.has(foe.id)) s *= nukes.has(pol.id) ? 0.15 : 0.35;
-    if (inAssembly(pol) && inAssembly(foe)) s *= 0.6;
-    if (o.nomad) s *= 0.5;
-    if (o.culture !== a.culture) s *= 1.2;
-    if (a.famine) { s *= 1.5; why = rnd() < 0.5 ? 'hunger' : 'raid'; }
-    if (pol.crowdMax > 1.05) { s *= 1.3; why = 'land'; }
-    if (knows(a, 'bronze') && o.near.tin > 0 && a.near.tin === 0) { s *= 1.6; why = 'tin'; }
-    if (knows(a, 'iron') && o.near.iron > 0 && a.near.iron === 0) { s *= 1.3; why = 'iron'; }
-    if (knows(a, 'combustion') && o.near.oil > 0 && a.near.oil === 0) { s *= 1.5; why = 'oil'; }
-    if (pol.lost && pol.lost[foe.id] > yr - 60) { s *= 1.7; why = 'revenge'; }
-    if (pol.fac[2] > 0.3 && o.culture.id !== a.culture.id && rnd() < 0.3) { s *= 1.3; why = 'holy'; }
-    if (foe.pop < pol.pop * 0.35 && rnd() < 0.3) why = 'tribute';
-    if (pol.nodes.includes('con3') && foe.pop < pol.pop * 0.7) { s *= 1.3; why = 'empire'; }
-    if (rel < -40) why = 'old hatred';
-    if (pol.unpaidBy && pol.unpaidBy[foe.id] > 200 && rnd() < 0.5) { s *= 1.5; why = 'debts'; }
-    if (s > bs) { bs = s; best = o; cause = why; }
-  }
+  const ctx = warCtx(pol);
+  let best = null;
+  for (const o of W.towns) { const m = warMotive(pol, a, o, ctx); if (m && (!best || m.s > best.s)) best = m; }
   if (!best) return;
-  const chance = 0.26 * lust * (a.famine ? 2 : 1);
+  const chance = 0.26 * lust * (a.famine ? 2 : 1) * (best.why === 'land' && ctx.lh > 0.5 ? 1 + ctx.lh * 0.5 : 1);
   if (rnd() > chance) return;
-  startWar(pol, best.polity, cause, a, best);
+  const war = startWar(pol, best.o.polity, best.why, a, best.o);
+  if (war && best.why === 'land' && ctx.lh > 0.4 && pol.lhTown) chronT('war', `${pol.name} has no room left to grow: ${pol.lhTown.name} cannot find land to build on, and its young families have nowhere to farm. It means to take the country round ${best.o.name}.`, best.o);
+}
+// For the realm panel: against each neighbour it knows, the strongest case for war its rulers could make this year,
+// and roughly how likely they are to act on it. The same scoring considerWar uses; worked out at most once a year per realm.
+function grievances(pol) {
+  const yr = Math.floor(year());
+  if (pol.grvY === yr && pol.grv) return pol.grv;
+  const towns = W.towns.filter(t => t.polity === pol && !t.nomad && !t.occupier && tn(t) >= 32);
+  const ctx = warCtx(pol), lust = warLust(pol), rows = new Map();
+  const sample = towns.length > 8 ? towns.slice().sort((x, y) => tn(y) - tn(x)).slice(0, 8) : towns;
+  for (const a of sample) {
+    let best = null;
+    for (const o of W.towns) { const m = warMotive(pol, a, o, ctx); if (m && (!best || m.s > best.s)) best = m; }
+    if (!best) continue;
+    const foe = best.o.polity, r = rows.get(foe.id);
+    if (!r) rows.set(foe.id, { foe, m: best, n: 1 }); else { r.n++; if (best.s > r.m.s) r.m = best; }
+  }
+  const out = [];
+  for (const r of rows.values()) {
+    // considerWar picks one of its towns at random and attacks whatever that town's best target is
+    const p = govSt(pol) >= 2 && towns.length ? clamp(0.26 * lust * r.n / sample.length * (pol.warCool > 0 ? 0 : 1), 0, 1) : 0;
+    out.push({ foe: r.foe, why: r.m.why, parts: r.m.parts.filter(q => q[0] !== 'strength'), power: r.m.power, score: r.m.s, chance: p, target: r.m.o });
+  }
+  out.sort((x, y) => y.score - x.score);
+  pol.grvY = yr; pol.grv = out;
+  return out;
 }
 function startWar(att, def, cause, home, target) {
   if (att === def || atWar(att, def)) return null;
@@ -241,11 +330,17 @@ function startWar(att, def, cause, home, target) {
   adjustRel(att, def, -30);
   att.mob = Math.max(att.mob, 0.2); def.mob = Math.max(def.mob, 0.35);
   const place = target || def.capital || att.capital;
+  if (cause === 'revolt') {
+    // a rising is the crown's own business: no allies, no coalitions
+    if (place) chronT('war', `${att.name} sends its army to crush the ${war.name}.`, place);
+    if (home && target) raiseArmy(home, target, war, 'conquer');
+    return war;
+  }
   if (place) chronT('war', `${att.name} declares war on ${def.name} ${CAUSE_TEXT[cause] || ''}: the ${war.name} begins.`, place);
   for (const k of def.allies.slice()) { const ally = W.polities[k]; if (ally && ally.alive && !atWar(ally, att) && relOf(ally, def) >= 20 && rnd() < 0.8) joinWar(war, ally, 'b'); }
   for (const k of att.allies.slice()) { const ally = W.polities[k]; if (ally && ally.alive && !atWar(ally, def) && relOf(ally, att) >= 40 && rnd() < 0.4) joinWar(war, ally, 'a'); }
   // a realm that keeps swallowing its neighbours finds them lining up against it
-  if ((att.infamy || 0) > 22) {
+  if ((att.infamy || 0) > 22 && cause !== 'revolt') {
     for (const k in att.known) {
       const o = W.polities[+k];
       if (!o || !o.alive || o === def || o === att || war.b.includes(o) || war.a.includes(o) || atWar(o, att) || areAllies(o, att) || relOf(o, att) > 10) continue;
@@ -257,6 +352,8 @@ function startWar(att, def, cause, home, target) {
 }
 function warName(a, b, cause) {
   if (cause === 'civil war') return `${a.name} Civil War`;
+  if (cause === 'revolt') return `${b.name} Rising`;
+  if (cause === 'reconquest') return `War to Retake ${b.name}`;
   if (cause === 'holy') return `${b.name} Crusade`;
   if (cause === 'tin' || cause === 'iron' || cause === 'oil') return `${cap(cause)} War`;
   if (cause === 'raid') return `${a.name} Raids`;
@@ -271,7 +368,52 @@ function joinWar(war, pol, side, why) {
   us.push(pol);
   for (const o of them) { pol.warsWith[o.id] = war; o.warsWith[pol.id] = war; adjustRel(pol, o, -18); }
   pol.mob = Math.max(pol.mob, 0.15);
-  if (pol.capital) chronT('war', why === 'coalition' ? `Fearing what ${them[0].name} will do next, ${pol.name} joins the coalition against it in the ${war.name}.` : `${pol.name} honours its alliance and enters the ${war.name}.`, pol.capital);
+  const friend = us[0], foe = them[0];
+  const text = why === 'coalition' ? `Fearing what ${foe.name} will do next, ${pol.name} joins the coalition against it in the ${war.name}.`
+    : why === 'grudge' ? `${pol.name} sees its chance against ${foe.name}, an old enemy, and enters the ${war.name} on the side of ${friend.name}.`
+    : why === 'late' ? `With ${friend.name} hard pressed, ${pol.name} keeps its word at last and enters the ${war.name}.`
+    : `${pol.name} honours its alliance and enters the ${war.name}.`;
+  (war.joined = war.joined || []).push({ id: pol.id, side, why: why || 'ally', yr: Math.floor(year()) });
+  if (pol.capital) chronT('war', text, pol.capital);
+}
+// Once a year in every war: allies who held back may come in after all, an old enemy of one side may see its chance, and friends
+// who stay out still send money and food to a side that's struggling.
+function alliesYear(war, A, B, yr) {
+  const bal = war.balance || 0;
+  for (const [S0, O, side] of [[A, B, 'a'], [B, A, 'b']]) {
+    const lead = S0[0], enemy = O[0];
+    if (!lead || !enemy) continue;
+    const losing = side === 'a' ? bal < -10 : bal > 10;
+    const hurt = W.towns.some(t => S0.includes(t.polity) && (t.occupier || t.attack));
+    // allies who held back
+    for (const k of lead.allies) {
+      const al = W.polities[k];
+      if (!al || !al.alive || A.includes(al) || B.includes(al) || areAllies(al, enemy) || al.truce[enemy.id] > yr || relOf(al, lead) < 20) continue;
+      if (rnd() < 0.05 + (hurt ? 0.18 : 0) + (losing ? 0.1 : 0)) { joinWar(war, al, side, 'late'); continue; }
+      // or at least pays for it
+      if (al.cur.kind >= 2 && lead.cur.kind >= 2 && al.cur.treasury > 0 && lead.cur.treasury < al.cur.treasury * 0.3) {
+        const v = al.cur.treasury * 0.08;
+        al.cur.treasury -= v; al.cur.spentY += v; lead.cur.treasury += v * fx(al, lead);
+        flow(al, lead, 'aid', v * al.cur.value);
+        if (!(war.subs && war.subs[al.id])) { (war.subs = war.subs || {})[al.id] = 1; (war.joined = war.joined || []).push({ id: al.id, side, why: 'money', yr: Math.floor(yr) }); if (lead.capital) chronT('war', `${al.name} stays out of the ${war.name}, but pays for ${lead.name}'s armies.`, lead.capital); }
+      }
+      // and food into a besieged ally's town, if it can get it there
+      for (const t of W.towns) {
+        if (t.polity !== lead || !t.attack || t.attack.blockade || !al.capital || !al.capital.alive) continue;
+        if (Math.hypot(t.x - al.capital.x, t.y - al.capital.y) > 70) continue;
+        const f = Math.min(al.capital.stock[R.FOOD] * 0.06, tn(t) * 2);
+        if (f > 5) { al.capital.stock[R.FOOD] -= f; t.stock[R.FOOD] += f; }
+      }
+    }
+    // an old enemy of the other side, strong enough to matter, joins in for its own reasons
+    for (const k in enemy.known) {
+      const o = W.polities[+k];
+      if (!o || !o.alive || o.pop <= 0 || A.includes(o) || B.includes(o) || areAllies(o, enemy) || o.truce[enemy.id] > yr || atWar(o, enemy) || govSt(o) < 2) continue;
+      const hate = Math.max(-relOf(o, enemy) - 40, grudgeOf(o, enemy) - 15);
+      if (hate <= 0 || o.pop < enemy.pop * 0.25 || relOf(o, lead) < -20) continue;
+      if (rnd() < Math.min(0.12, hate / 500) * (losing ? 0.6 : 1.2)) joinWar(war, o, side, 'grudge');
+    }
+  }
 }
 function dropFromWar(pol, war) {
   for (const o of war.a.concat(war.b)) if (o.warsWith[pol.id] === war) delete o.warsWith[pol.id];
@@ -287,6 +429,7 @@ function warsYear() {
   // nerve and memory drain slowly away
   for (const pol of W.polities) if (pol.alive) { pol.infamy = (pol.infamy || 0) * 0.97; pol.warTired = (pol.warTired || 0) * 0.93; if (!Object.keys(pol.warsWith).length) { pol.mob = Math.max(0, (pol.mob || 0) - 0.08); pol.support += (60 - pol.support) * 0.2; } }
   for (const t of W.towns) if (t.occupier) occupationYear(t);
+  for (const t of W.towns) for (const k in MIL_BASE) if (t.count[k]) { syncBases(t); break; }
   // an army in the field is paid, fed and shod every year it is out; a realm that can't pay finds its soldiers can't be relied on
   for (const a of W.armies) {
     if (a.militia || a.over) continue;
@@ -299,6 +442,7 @@ function warsYear() {
     const war = W.wars[k];
     const A = war.a.filter(p => p.alive && p.towns > 0), B = war.b.filter(p => p.alive && p.towns > 0);
     if (!A.length || !B.length) { endWar(war, !A.length ? 'b' : 'a', 'conquest'); continue; }
+    alliesYear(war, A, B, yr);
     for (const pol of A) warPlan(pol, B, war);
     for (const pol of B) warPlan(pol, A, war);
     if (rnd() < 0.3) spyYear(A, B, war);
@@ -332,6 +476,7 @@ function tryPeace(war, A, B, yr) {
     const free = W.towns.some(t => S0.includes(t.polity) && !t.occupier);
     if (!free) { endWar(war, win, 'conquest'); return; }
   }
+  if (war.cause === 'revolt') { revoltYear(war, yr, bal); return; }
   if (age < 2) return;
   const leader = bal > 0 ? 'a' : 'b', mag = Math.abs(bal);
   const exWin = leader === 'a' ? war.exA : war.exB, exLose = leader === 'a' ? war.exB : war.exA;
@@ -379,27 +524,35 @@ function warPlan(pol, foes, war) {
   const mine = W.armies.filter(a => a.pol === pol && a.goal !== 'garrison');
   const homes = W.towns.filter(t => t.polity === pol && !t.nomad && !t.occupier && !t.attack && tn(t) >= 20 && t.armyCool <= yr);
   if (!homes.length) return;
-  const limit = 1 + Math.floor(pol.towns / 5) + Math.floor((pol.mob || 0) * 2);
+  const limit = 1 + Math.floor(pol.towns / 4) + Math.floor((pol.mob || 0) * 3);
   if (mine.length >= limit) return;
   const nearestHome = (x, y, land) => { let b = null, bd = 1e9; for (const h of homes) { if (land !== undefined && W.landId[h.i] !== land && h.portLv < 2) continue; const d = (h.x - x) ** 2 + (h.y - y) ** 2; if (d < bd) { bd = d; b = h; } } return b; };
+  // whose towns we defend: our own, and those of anyone fighting on our side, if we're close enough to help
+  const friends = ourSide(war, pol), farOK = (t, h) => t.polity === pol || (h && Math.hypot(h.x - t.x, h.y - t.y) < 60);
+  const helping = t => t.polity === pol || !W.armies.some(a => a.target === t && a.pol !== pol && friends.includes(a.pol) && a.goal !== 'garrison');
+  const sendHelp = (m, t) => { if (m && t.polity !== pol && menOf(m) >= 30) chronT('war', `${pol.name} sends the ${m.name} to help its ally ${t.polity.name} at ${t.name}.`, t); return m; };
   // relief
   for (const B of W.battles) {
-    if (!B.town || B.war !== war || B.town.polity !== pol || mine.some(a => a.target === B.town)) continue;
+    if (!B.town || B.war !== war || !friends.includes(B.town.polity) || mine.some(a => a.target === B.town) || !helping(B.town)) continue;
     const h = nearestHome(B.town.x, B.town.y, W.landId[B.town.i]);
-    if (h && raiseArmy(h, B.town, war, 'relieve')) return;
+    if (h && farOK(B.town, h) && sendHelp(raiseArmy(h, B.town, war, 'relieve'), B.town)) return;
   }
   // win back what's occupied
   for (const t of W.towns) {
-    if (t.polity !== pol || !t.occupier || !foes.includes(t.occupier) || mine.some(a => a.target === t)) continue;
+    if (!friends.includes(t.polity) || !t.occupier || !foes.includes(t.occupier) || mine.some(a => a.target === t) || !helping(t)) continue;
+    if (t.polity !== pol && rnd() < 0.5) continue;
     const h = nearestHome(t.x, t.y, W.landId[t.i]);
-    if (h && rnd() < 0.7 && raiseArmy(h, t, war, 'liberate')) return;
+    if (h && farOK(t, h) && rnd() < 0.7 && sendHelp(raiseArmy(h, t, war, 'liberate'), t)) return;
   }
   // stop an invasion on the road
   for (const a of W.armies) {
-    if (!foes.includes(a.pol) || a.goal === 'garrison' || !a.target || a.target.polity !== pol || a.battle) continue;
-    if (mine.some(m => m.target === a.target)) continue;
+    if (!foes.includes(a.pol) || a.goal === 'garrison' || !a.target || !friends.includes(a.target.polity) || a.battle) continue;
+    // scorched earth: burn your own country ahead of a host you can't stop, so it finds nothing to eat
+    const tt = a.target;
+    if (tt.polity === pol && !(tt.scorched > W.tick) && armyStrength(a) > townStrength(tt) * 1.2 && (hasTr(pol.ruler && pol.ruler.alive ? pol.ruler : null, ['cruel']) || GOV[pol.gov].cons >= 1.2 || rnd() < 0.25)) scorch(tt, a);
+    if (mine.some(m => m.target === a.target || m.chase === a) || !helping(tt)) continue;
     const h = nearestHome(a.target.x, a.target.y, W.landId[a.target.i]);
-    if (h && rnd() < 0.7) { const m = raiseArmy(h, a.target, war, 'intercept'); if (m) { m.chase = a; return; } }
+    if (h && farOK(tt, h) && rnd() < 0.7) { const m = sendHelp(raiseArmy(h, a.target, war, 'intercept'), tt); if (m) { m.chase = a; return; } }
   }
   // offensive: value over distance over how well it's held
   const ours = sideOf(war, pol);
@@ -424,6 +577,14 @@ function warPlan(pol, foes, war) {
   const raider = (G.raid || weak) && rnd() < 0.7;
   if (rnd() < 0.55 + (pol.mob || 0) * 0.4) raiseArmy(home, tgt, war, raider ? 'raid' : 'conquer');
 }
+function scorch(t, a) {
+  t.scorched = W.tick + TPY * 1.5;
+  let burned = 0;
+  for (const f of t.fields) if (W.stage[f.i] && rnd() < 0.5) { W.stage[f.i] = 0; dirty(f.i); if (FXH && burned < 6) FXH.burn(f.i % W.w, (f.i / W.w) | 0); burned++; }
+  t.stock[R.FOOD] *= 0.85;  // what couldn't be carried inside the walls
+  t.unrest = Math.min(100, (t.unrest || 0) + 6);
+  if (tn(t) > 30) chronT('war', `${t.polity.name} burns the fields round ${t.name} ahead of the ${a.name}, and leaves it nothing to eat.`, t);
+}
 // Spies: quiet killings, burned stores, stolen plans. Literate realms only.
 function spyYear(A, B, war) {
   const us = rnd() < 0.5 ? A : B, them = us === A ? B : A;
@@ -443,7 +604,7 @@ function spyYear(A, B, war) {
 }
 
 // ---- raising an army ----
-function raiseArmy(a, target, war, goal) {
+function raiseArmy(a, target, war, goal, quiet) {
   const pol = a.polity, g = GOV[pol.gov], e = pol.era || 0;
   portOf(a);
   const fit = a.members.filter(p => callable(p, e));
@@ -454,8 +615,8 @@ function raiseArmy(a, target, war, goal) {
   const share = levyShare(a, pol);
   let size = Math.min(fit.length, Math.max(8, pros, Math.floor(fit.length * share)));
   // in a city far bigger than the people being simulated, each figure stands for more men (army.rep)
-  if (goal === 'raid') size = Math.min(size, 8 + rint(14));
-  size = Math.min(size, 420);
+  if (goal === 'raid') size = Math.min(size, 10 + rint(24));
+  size = Math.min(size, 700);
   const takers = fit.slice(0, size);
   // the rest of the realm sends its contingents: every town within a few days' march on the same land, by the same levy
   const contingents = [];
@@ -463,21 +624,23 @@ function raiseArmy(a, target, war, goal) {
     for (const o of W.towns) {
       if (o === a || o.polity !== pol || o.nomad || o.occupier || o.attack || !o.alive || W.landId[o.i] !== W.landId[a.i] || tn(o) < 25) continue;
       const d = Math.hypot(o.x - a.x, o.y - a.y);
-      if (d > (goal === 'intercept' ? 22 : 34) + (e >= 6 ? 30 : 0)) continue;  // railways bring them from much further; a host sent to stop an invasion can't wait long
+      if (d > (goal === 'intercept' ? 26 : 48) + (e >= 6 ? 30 : 0)) continue;  // railways bring them from much further; a host sent to stop an invasion can't wait long
       const f2 = o.members.filter(p => callable(p, e));
       f2.sort((x, y) => (y.job === J.SOLDIER ? 2 : 0) + y.str - (x.job === J.SOLDIER ? 2 : 0) - x.str);
-      const n2 = Math.min(f2.length, Math.round(f2.length * levyShare(o, pol) * 0.8), 160);
+      const n2 = Math.min(f2.length, Math.round(f2.length * levyShare(o, pol) * (goal === 'intercept' ? 0.7 : 1)), 300);
       if (n2 >= 2) { for (let k = 0; k < n2; k++) takers.push(f2[k]); contingents.push(o); }
-      if (takers.length >= 900) break;
+      if (takers.length >= 1400) break;
     }
   }
   size = takers.length;
   // how many men each figure stands for: the crowd behind the people being simulated, in the towns that sent them
   let sc = 0; for (const p of takers) sc += Math.max(1, tn(p.town) / Math.max(1, p.town.members.length));
-  const rep = goal === 'raid' ? 1 : Math.max(1, Math.round(Math.min(sc / Math.max(1, size), 60)));
+  const rep = goal === 'raid' ? 1 : Math.max(1, Math.round(Math.min(sc / Math.max(1, size), 120)));
   const army = {
     id: W.nextId++, pol, war, home: a, target, goal: goal || 'conquer', soldiers: [], units: [], start: W.tick, size, battle: null, kills: 0, lost: 0, tgtPol: target.polity,
-    phase: 'muster', morale: 55 + (a.mod.morale || 0), general: null, mercs: 0, guns: [], landed: false, sailing: 0, x: a.x, y: a.y, name: '', taken: 0, path: null, pi: 0, rally: nearTile(a.i, 5), food: 0, foodMax: 0, power: 0, musterEnd: W.tick + musterTicks(e) + rint(20) + (contingents.length ? 25 : 0), militia: false, nextConvoy: 0, wins: 0, starving: 0, camp: false, razed: 0, side: null, lastEnc: 0, width: 4, ranks: 0, arriveT: 0,
+    phase: 'muster', morale: 55 + (a.mod.morale || 0), general: null, mercs: 0, guns: [], landed: false, sailing: 0, x: a.x, y: a.y, name: '', taken: 0, path: null, pi: 0, rally: rallyPoint(a, target), food: 0, foodMax: 0, power: 0,
+    // a host sent to stop an invasion or lift a siege goes with whoever is ready; anyone else gathers the whole levy first
+    musterEnd: W.tick + (goal === 'intercept' || goal === 'relieve' ? 10 + rint(10) + (contingents.length ? 12 : 0) : musterTicks(e) + rint(20) + (contingents.length ? 25 : 0)), militia: false, nextConvoy: 0, wins: 0, starving: 0, camp: false, razed: 0, side: null, lastEnc: 0, width: 4, ranks: 0, arriveT: 0,
     rep, hpK: Math.sqrt(rep), held: 0, peak: 0, reinfT: W.tick, levy: e <= 5 && pros < size * 0.5, era: e,
   };
   for (let k = 0; k < size; k++) {
@@ -489,11 +652,12 @@ function raiseArmy(a, target, war, goal) {
     army.soldiers.push(p);
   }
   army.contingents = contingents.length;
+  if (contingents.length) { army.rallyOf = {}; for (const o of contingents) army.rallyOf[o.id] = rallyPoint(o, a); army.joinT = W.tick + Math.min(30, Math.round((army.musterEnd - W.tick) * 0.3)); }
   // a rich realm with an unwilling people buys the soldiers it can't raise: hard men from far away, paid by the year, loyal to the purse
   const cur = pol.cur;
   if (cur.kind >= 2 && goal !== 'raid' && !a.nomad && knows(a, 'currency')) {
     const each = Math.max(a.wage, 1) * 3;
-    const hire = Math.min(40, Math.floor(size * 0.6), Math.floor((cur.treasury - each * 12) / each));
+    const hire = Math.min(80, Math.floor(size * 0.6), Math.floor((cur.treasury - each * 12) / each));
     if (hire >= 5 && (pol.support < 55 || defPower(target) > tn(a) * 0.5 || fit.length < 20)) {
       for (let k = 0; k < hire; k++) {
         const p = newPerson(a, rnd() < 0.9 ? 0 : 1, 20 + rint(16));
@@ -513,6 +677,8 @@ function raiseArmy(a, target, war, goal) {
   for (const p of army.soldiers) { const v = p.leadM * 4 + p.fame + (p.xp || 0) * 0.2 + (p.warM - 1) * 2; if (v > bs) { bs = v; bg = p; } }
   army.general = bg;
   if (bg) { bg.fame += 1; plog(bg, `Led the host of ${a.name} against ${target.name}.`); army.morale += (bg.leadM - 1) * 18 + Math.min(bg.fame, 30) * 0.3; }
+  // a host sent to save a town, or led by someone in a hurry, marches day and night and leaves stragglers on the road
+  army.forced = target !== a && goal !== 'raid' && (goal === 'relieve' || goal === 'intercept' || (bg && hasTr(bg, BOLD) && rnd() < 0.4));
   // soldiers know what the people at home think of the war
   army.morale += (pol.support - 55) * 0.15;
   army.name = armyName(army);
@@ -551,7 +717,7 @@ function raiseArmy(a, target, war, goal) {
     if (!landing) { endArmy(army); return null; }
     for (const p of army.soldiers) { p.task = T_BOARD; p.step = 0; p.tgt = a.portB !== undefined ? a.portB : a.i; }
     chronT('war', `${men} ${soldier} of ${pol.name} gather at the port of ${a.name} to sail against ${target.name}.`, a);
-  } else if (size >= 25 || tn(target) > 40) {
+  } else if (!quiet && (size >= 25 || tn(target) > 40)) {
     const verb = goal === 'relieve' ? 'to relieve' : goal === 'liberate' ? 'to retake' : goal === 'raid' ? 'to raid' : goal === 'intercept' ? 'to defend' : 'against';
     chronT('war', `${pol.name} ${contingents.length ? `calls up ${men} ${soldier} from ${a.name} and ${contingents.length === 1 ? contingents[0].name : contingents.length + ' other towns'}, to march` : `marches ${men} ${soldier} from ${a.name}`} ${verb} ${target.name}, armed with ${gear}${/s$/.test(gear) ? '' : 's'}.`, target);
   }
@@ -559,6 +725,7 @@ function raiseArmy(a, target, war, goal) {
 }
 function armyName(army) {
   const a = army.home, pol = army.pol, k = (pol.armyN = (pol.armyN || 0) + 1);
+  if (pol.rebel) return `Rebels of ${a.name}`;
   if (a.mod.tier >= 3 && menOf(army) > 300) return `${ordinal(k)} Army of ${pol.name}`;
   return army.goal === 'raid' ? `Raiders of ${a.name}` : `Host of ${a.name}`;
 }
@@ -581,7 +748,8 @@ function warStep(p) {
   const a = p.army;
   if (!a) { endTask(p); return; }
   p.hidden = false;
-  if (a.phase === 'muster') { soldierGo(p, a.rally); return; }
+  // contingents fall in at their own town's base first, then march to join the main host
+  if (a.phase === 'muster') { const own = a.rallyOf && W.tick < a.joinT ? a.rallyOf[p.town.id] : undefined; soldierGo(p, own !== undefined ? own : a.rally); return; }
   if (a.phase === 'march' && a.path) {
     const P = a.path, L = P.length - 1, idx = clamp(Math.floor(a.pi - p.slotY * 1.1), 0, L), base = P[idx], w = W.w;
     const nx = P[Math.min(idx + 1, L)], dx = nx % w - base % w, dy = ((nx / w) | 0) - ((base / w) | 0);
@@ -652,8 +820,10 @@ function planRoute(army) {
   let to = nearTile(army.target.i, 5);
   if (W.landId[to] !== W.landId[from]) to = army.target.i;
   nodeBudget = Math.max(nodeBudget, 1);
-  const path = findPath(from, to, 0);
+  let path = findPath(from, to, 0);
   if (path === PATH_BUSY) return false;
+  // a host camped in a walled town, or marching on one, goes out by the gate and in by the breach: through the walls if it must
+  if (!path) { nodeBudget = Math.max(nodeBudget, 1); path = findPath(from, to, 8); if (path === PATH_BUSY) return false; }
   if (!path) {
     army.lost = (army.lost || 0) + 1;
     if (army.lost < 4) return false;  // try again from a different spot next time
@@ -773,7 +943,7 @@ function reinforce(army) {
   const first = S0.find(p => !p.aboard);
   if (!first || W.landId[first.ti] !== W.landId[home.i]) return;
   const e = pol.era || 0, fit = home.members.filter(p => callable(p, e));
-  const n = Math.min(Math.floor(army.peak * 0.7) - S0.length, Math.floor(fit.length * levyShare(home, pol) * 0.5), 80);
+  const n = Math.min(Math.floor(army.peak * 0.7) - S0.length, Math.floor(fit.length * levyShare(home, pol) * 0.5), 160);
   if (n < 3) return;
   fit.sort((x, y) => y.str - x.str);
   const w0 = Math.max(2, army.width);
@@ -835,8 +1005,10 @@ function pillage(army, hits) {
       if (W.plant[f.i] === f.k) { W.plant[f.i] = 0; W.plantS[f.i] = 0; dirty(f.i); got += 3; if (FXH) FXH.burn(f.i % W.w, (f.i / W.w) | 0); }
     } else got += 1;
   }
-  const taken = Math.min(best.stock[R.FOOD] * 0.03, army.soldiers.length * (army.rep || 1));
+  const scorched = best.scorched > W.tick;
+  const taken = Math.min(best.stock[R.FOOD] * (scorched ? 0.01 : 0.03), army.soldiers.length * (army.rep || 1));
   best.stock[R.FOOD] -= taken; got += taken;
+  if (scorched) got *= 0.25;  // the country was burned before they got there
   army.food += got;
   army.razed++;
   best.warYear = year();
@@ -874,7 +1046,17 @@ function armyUpdate(army) {
   const tg = army.target, pol = army.pol, S0 = army.soldiers;
   if (army.phase === 'sail') {
     if (!S0.length) { endArmy(army); return; }  // the whole host went down with its ships
-    if (army.landed || army.sailing === 0 || !W.ships.some(s => s.army === army)) { army.phase = 'march'; army.path = null; for (const p of S0) if (!p.aboard) { p.task = T_WAR; p.step = 0; p.st = 0; p.wake = W.tick + rint(20); } }
+    if (army.landed || army.sailing === 0 || !W.ships.some(s => s.army === army)) {
+      army.phase = 'march'; army.path = null; for (const p of S0) if (!p.aboard) { p.task = T_WAR; p.step = 0; p.st = 0; p.wake = W.tick + rint(20); }
+      // an amphibious landing: unopposed is a gift, under the guns of a host waiting on the beach is a slaughter
+      if (army.landed && !army.saidLand && S0.length) {
+        army.saidLand = 1;
+        const lx = army.landing ? army.landing.land % W.w : army.x, ly = army.landing ? (army.landing.land / W.w) | 0 : army.y;
+        const foe = W.armies.find(o => o.pol !== pol && atWar(pol, o.pol) && o.phase !== 'sail' && (o.x - lx) ** 2 + (o.y - ly) ** 2 < 200);
+        if (foe) { army.morale = Math.max(0, army.morale - 12); for (let q = 0; q < Math.ceil(S0.length * 0.05); q++) { const v = S0[rint(S0.length)]; if (v && v !== army.general) campDeath(army, v, 'killed in the landing'); } }
+        if (menOf(army) >= 60) chronT('war', foe ? `The ${army.name} lands under the guns of the ${foe.name}, and pays for every yard of beach.` : `The ${army.name} comes ashore unopposed.`, army.target);
+      }
+    }
     return;
   }
   if (S0.length === 0) { endArmy(army); return; }
@@ -891,7 +1073,7 @@ function armyUpdate(army) {
 
   if (!army.home.alive) army.home = pol.capital && pol.capital.alive ? pol.capital : army.home;
   if (army.goal === 'garrison') { garrisonUpdate(army); return; }
-  const valid = tg.alive && army.war && !army.war.ended && tg.occupier !== pol && (tg.polity === pol || areAllies(pol, tg.polity) || atWar(pol, tg.polity) || (tg.occupier && atWar(pol, tg.occupier)));
+  const valid = tg.alive && army.war && !army.war.ended && tg.occupier !== pol && (tg.polity === pol || areAllies(pol, tg.polity) || atWar(pol, tg.polity) || (tg.occupier && atWar(pol, tg.occupier)) || ourSide(army.war, pol).includes(tg.polity));
   if (!valid) { if (!nextObjective(army)) endArmy(army); return; }
   armyStrength(army);
   supplyArmy(army);
@@ -900,6 +1082,15 @@ function armyUpdate(army) {
   for (let k = 0; k < S0.length; k++) { const p = S0[k]; if (p.hp < maxHP(p)) p.hp = Math.min(maxHP(p), p.hp + 0.6); if (p.stam < 100) p.stam = Math.min(100, p.stam + 8); if (p.wound && rnd() < 0.01) p.wound = 0; }
   army.morale = clamp(army.morale + (army.food > 0 ? 0.08 : -0.3), 0, 100);
   if (encounter(army)) return;
+  // the last day's march: the town comes out to fight, or shuts its gates; a relief army brings the besiegers to battle
+  if (army.phase === 'march' && tg.alive) {
+    const d2 = (army.x - tg.x) ** 2 + (army.y - tg.y) ** 2, left = army.path ? army.path.length - 1 - army.pi : 99;
+    if (d2 < 260 || left < 18) {
+      if ((army.goal === 'conquer' || army.goal === 'raid') && !army.met && !tg.attack && !tg.occupier && d2 > 25) { army.met = 1; if (sallyOut(tg, army)) return; }
+      const B = tg.attack;
+      if (B && B.town === tg && B.stage === 'invest' && army.goal !== 'raid' && !ourSide(army.war, B.sA.pol).includes(pol) && (B.sB.pol === pol || ourSide(army.war, pol).includes(B.sB.pol) || areAllies(pol, B.sB.pol)) && reliefBattle(B, army)) return;
+    }
+  }
   reinforce(army);
 
   if (army.phase === 'muster') {
@@ -907,7 +1098,8 @@ function armyUpdate(army) {
     if (W.tick >= army.musterEnd) {
       const rx = army.rally % W.w, ry = (army.rally / W.w) | 0;
       let inn = 0; for (const p of S0) { const dx = p.ti % W.w - rx, dy = ((p.ti / W.w) | 0) - ry; if (dx * dx + dy * dy < 100) inn++; }
-      if ((inn >= S0.length * 0.75 || W.tick > army.musterEnd + 90) && planRoute(army)) army.phase = 'march';
+      const fast = army.goal === 'intercept' || army.goal === 'relieve';
+      if ((inn >= S0.length * (fast ? 0.4 : 0.75) || W.tick > army.musterEnd + (fast ? 25 : 90)) && planRoute(army)) army.phase = 'march';
     }
     return;
   }
@@ -918,7 +1110,7 @@ function armyUpdate(army) {
   if (army.camp) return;
   // a host sent to stop another goes looking for it instead of waiting at home
   const ch = army.chase;
-  if (ch && (ch.over || !ch.soldiers.length || ch.phase === 'sail')) army.chase = null;
+  if (ch && (ch.over || !ch.soldiers.length || ch.phase === 'sail' || (army.chaseUntil && W.tick > army.chaseUntil))) { army.chase = null; army.chaseUntil = 0; if (army.goal !== 'intercept') army.path = null; }
   else if (ch && W.tick - (army.chaseT || 0) >= 80) {
     army.chaseT = W.tick;
     const from = S0[0].ti, to = Math.round(ch.y) * W.w + Math.round(ch.x);
@@ -933,6 +1125,12 @@ function armyUpdate(army) {
   const P = army.path, L = P.length - 1;
   let budget = 20 * 2.5 * army.home.mod.speed * (army.guns.length ? 0.8 : 1) * clamp(army.morale / 50, 0.7, 1.1);
   if (army.goal === 'relieve') budget *= 1.2;
+  if (army.forced) {
+    budget *= 1.45;
+    army.morale = Math.max(0, army.morale - 0.15);
+    if (rnd() < S0.length * 0.002) { const v = S0[rint(S0.length)]; if (v && v !== army.general) campDeath(army, v, 'collapsed on a forced march'); }
+    if (!army.saidForced) { army.saidForced = 1; if (menOf(army) >= 150) chronT('war', `The ${army.name} goes on a forced march to ${tg.name}, and leaves stragglers all along the road.`, tg); }
+  }
   while (budget > 0 && army.pi < L + army.ranks * 1.1) { const c = army.pi < L ? W.cost[P[Math.floor(army.pi) + 1]] || 10 : 10; budget -= c; army.pi++; }
   let arrived = 0;
   for (let k = 0; k < S0.length; k++) { const p = S0[k], dx = p.ti % W.w - tg.x, dy = ((p.ti / W.w) | 0) - tg.y; if (dx * dx + dy * dy < 120) arrived++; }
@@ -977,27 +1175,115 @@ function encounter(army) {
     if (onA && atWar(pol, B.sB.pol)) { joinBattle(B, army, B.sA); return true; }
     if (onB && atWar(pol, B.sA.pol)) { joinBattle(B, army, B.sB); return true; }
   }
+  let seek = null, sd = 1e9;
   for (const o of W.armies) {
     if (o === army || o.battle || !atWar(pol, o.pol) || o.phase === 'embark' || o.phase === 'sail') continue;
-    const dx = o.x - x, dy = o.y - y;
-    if (dx * dx + dy * dy > 110) continue;
+    const dx = o.x - x, dy = o.y - y, dd = dx * dx + dy * dy;
+    // scouts see a host a day's march off; a stronger army on campaign goes after it rather than walk past
+    if (dd > 230) { if (dd < 700 && !army.chase && army.phase === 'march' && army.goal !== 'raid' && army.goal !== 'garrison' && o.goal !== 'garrison' && !o.militia && dd < sd) { seek = o; sd = dd; } continue; }
+    if (o.fabian && W.tick - (o.harryT || 0) < 120 && rnd() < 0.65) continue;  // a shadowing army that won't stand is hard to bring to battle
     // scouts report what's over the hill; a much weaker host tries to get away if it isn't defending anything
     const mine = armyStrength(army), theirs = armyStrength(o);
     const defending = army.goal === 'relieve' || army.goal === 'intercept' || army.goal === 'garrison';
+    // Fabian war: a careful general who is badly outnumbered won't give battle at all, but shadows the enemy, cuts up its foragers and burns its wagons
+    const g = army.general && army.general.alive ? army.general : null;
+    if (mine < theirs * 0.5 && g && army.goal !== 'garrison' && army.goal !== 'raid' && army.soldiers.length >= 10 && (hasTr(g, SLY) || hasTr(g, WARY) || g.leadM >= 1.2)) {
+      if (W.tick - (army.harryT || 0) < 60) continue;
+      army.harryT = W.tick;
+      o.food *= 0.88; o.morale = Math.max(0, o.morale - 3);
+      for (let q = 0; q < 2; q++) { const v = o.soldiers[rint(o.soldiers.length)]; if (v && v !== o.general) campDeath(o, v, 'cut down while foraging'); }
+      if (!army.fabian) { army.fabian = 1; if (menOf(army) >= 60) chronT('war', `${g.name} will not give battle to the larger ${o.name}, and harries its foragers and baggage instead.`, army.home); }
+      continue;
+    }
     if (!defending && mine < theirs * 0.45 && rnd() < 0.7 && W.tick - army.lastEnc > 100) {
       army.lastEnc = W.tick;
       if (army.soldiers.length >= 15 && rnd() < 0.4) chronT('war', `The ${army.name} declines battle against the larger ${o.name} and falls back.`, army.home);
       endArmy(army);
       return true;
     }
-    startBattle(army, o, null);
+    startBattle(army, o, null, { kind: o.chase === army || army.chase === o ? 'intercept' : 'meet' });
     return true;
   }
+  if (seek && W.tick - (army.seekT || 0) > 200) {
+    army.seekT = W.tick;
+    const g = army.general && army.general.alive ? army.general : null;
+    if (armyStrength(army) > armyStrength(seek) * (hasTr(g, BOLD) ? 0.9 : 1.25) && rnd() < 0.6) {
+      army.chase = seek; army.chaseUntil = W.tick + 160; army.chaseT = 0;
+      if (menOf(army) >= 120) chronT('war', `Scouts find the ${seek.name} a day's march off, and the ${army.name} turns to bring it to battle.`, army.target);
+    }
+  }
   return false;
+}
+// Whoever fights on the same side in a war, allies or not.
+const ourSide = (war, pol) => !war ? [pol] : war.a.includes(pol) ? war.a : war.b.includes(pol) ? war.b : [pol];
+// An army is a day's march off. With walls and the odds against them, the town shuts its gates and waits; otherwise its people
+// march out to meet the enemy on the best ground they can find between, and so most battles are fought in the open.
+function sallyOut(t, inv) {
+  const pol = t.polity, war = inv.war;
+  // a field army of theirs nearby comes to stop it instead
+  for (const o of W.armies) {
+    if (o.battle || o.over || o.goal === 'garrison' || o.militia || o.phase === 'sail' || o.phase === 'embark' || !(o.pol === pol || ourSide(war, pol).includes(o.pol))) continue;
+    if ((o.x - t.x) ** 2 + (o.y - t.y) ** 2 > 900) continue;
+    if (!o.chase) { o.chase = inv; o.chaseT = 0; o.chaseUntil = W.tick + 200; }
+    return false;
+  }
+  if (t.nomad || tn(t) < 12) return false;
+  const theirs = armyStrength(inv), mine = levyStrength(t);
+  const walls = t.walls && t.fortHP > t.fortMax * 0.4;
+  const rul = pol.ruler && pol.ruler.alive ? pol.ruler : null;
+  const nerve = (hasTr(rul, BOLD) ? 1.25 : hasTr(rul, WARY) ? 0.8 : 1) * (inv.goal === 'raid' ? 1.4 : 1);
+  if (mine * nerve < theirs * (walls ? 1.1 : 0.55)) {
+    if (walls && tn(t) >= 40) chronT('war', `${t.name} shuts its gates as the ${inv.name} comes into sight.`, t);
+    return false;
+  }
+  // the best ground between town and enemy: a ridge, or a river in front of it
+  let gx = t.x, gy = t.y, gs = -1e9;
+  const dx = inv.x - t.x, dy = inv.y - t.y, d = Math.max(1, Math.hypot(dx, dy)), px = -dy / d, py = dx / d;
+  for (const f of [0.25, 0.4, 0.55]) for (const l of [-3, 0, 3]) {
+    const x = Math.round(t.x + dx * f + px * l), y = Math.round(t.y + dy * f + py * l);
+    if (x < 1 || y < 1 || x >= W.w - 1 || y >= W.h - 1) continue;
+    const i = y * W.w + x;
+    if (W.water[i] || W.landId[i] !== W.landId[t.i]) continue;
+    let s = (W.elev[i] - W.elev[Math.round(inv.y) * W.w + Math.round(inv.x)]) * 60 - Math.abs(l) * 0.1;
+    for (let q = 1; q < 6; q++) { const j = Math.round(y + (inv.y - y) * q / 6) * W.w + Math.round(x + (inv.x - x) * q / 6); if (W.river[j] && !W.water[j]) { s += 4; break; } }
+    if (s > gs) { gs = s; gx = x; gy = y; }
+  }
+  const host = raiseMilitia(t, { war });
+  if (host.soldiers.length < 6) { disbandMilitia(host, t); return false; }
+  host.name = `Levy of ${t.name}`;
+  const B = startBattle(inv, host, null, { kind: inv.goal === 'raid' ? 'levy' : 'sally', ground: { x: gx, y: gy }, town: t });
+  if (!B) { disbandMilitia(host, t); return false; }
+  return true;
+}
+// What a town's levy would be worth in the open, on the same scale as armyStrength: the share of its grown-ups raiseMilitia would take,
+// armed from its racks as far as they go, at a levy's middling nerve. No walls out there.
+function levyStrength(t) {
+  let n = 0;
+  for (const p of t.members) { const v = ageOf(p); if (v >= 15 && v < 58 && !p.army && !p.aboard) n++; }
+  n = Math.ceil(n * (t.count.barracks ? 0.7 : 0.55));
+  let w = 0, best = 0, a = 0, bestA = 0;
+  for (let k = WEAPONS.length - 1; k >= 1; k--) if (t.arsenal[k] >= 1) { w += t.arsenal[k]; if (!best) best = k; }
+  for (let k = ARMORS.length - 1; k >= 1; k--) if (t.armor[k] >= 1) { a += t.armor[k]; if (!bestA) bestA = k; }
+  const armed = Math.min(1, w / Math.max(1, n)), armd = Math.min(1, a / Math.max(1, n));
+  const per = 4 + (WEAPONS[best].dmg * armed + 2 * (1 - armed)), prot = 1 + ARMORS[bestA].prot * armd;
+  return n * per * prot * Math.max(1, Math.round(Math.min(t.scale || 1, 60))) * ((50 + (t.mod.morale || 0)) / 60) * Math.sqrt(t.mod.attack);
+}
+// A relief army close by: the besiegers can't fight the town and the relief at once. They turn to face it (from behind their
+// own lines, if they dug them), and the siege waits on the outcome.
+function reliefBattle(B, rel) {
+  const t = B.town, bes = B.sA.armies.filter(a => !a.militia && !a.over && a.soldiers.length);
+  if (!bes.length || B.over) return false;
+  const lines = !!B.lines;
+  suspendSiege(B);
+  const nb = startBattle(rel, bes[0], null, { kind: 'relief', lines, town: t });
+  if (nb) for (const a of bes.slice(1)) joinBattle(nb, a, nb.sB);
+  return !!nb;
 }
 function arriveAt(army) {
   const tg = army.target, pol = army.pol;
   army.arriveT = 0;
+  // at the gates at last: the town's last chance to come out and fight rather than be besieged
+  if ((army.goal === 'conquer' || army.goal === 'raid') && !army.met && tg.alive && !tg.attack && !tg.occupier && atWar(pol, tg.polity)) { army.met = 1; if (sallyOut(tg, army)) return; }
   if (army.goal === 'raid') {
     // burn and carry off, then go home before anyone comes
     pillage(army, 6);
@@ -1063,7 +1349,7 @@ function occupy(t, army, B) {
   t.occupier = pol; t.occSince = year();
   W.terrDirty = true;
   pol.conquests++;
-  pol.infamy = (pol.infamy || 0) + (6 + Math.sqrt(tn(t)) * 0.6) * (wasCap ? 2 : 1);
+  if (!army.war || army.war.cause !== 'revolt') pol.infamy = (pol.infamy || 0) + (6 + Math.sqrt(tn(t)) * 0.6) * (wasCap ? 2 : 1);
   old.lost = old.lost || {}; old.lost[pol.id] = year();
   teach(t, home, 0.3); teach(home, t, 0.3);
   stealMilitary(t, home, 0.5);
@@ -1116,9 +1402,12 @@ function occupationYear(t) {
   t.unrest = Math.min(100, t.unrest + 6);
   const garr = t.garrison && !t.garrison.over ? t.garrison.soldiers.length : 0;
   const n = tn(t);
-  // partisans rise when the garrison's small and the people have had enough
-  if (rnd() < 0.05 + (t.unrest / 100) * 0.25 - garr / Math.max(n, 1) * 0.5) {
-    const hit = Math.min(garr, 1 + rint(4));
+  // partisans rise when the garrison's small and the people have had enough; woods and hills to hide in make it a guerrilla war
+  const rough = (W.tree[t.i] > 2 ? 1 : 0) + ((W.elev[t.i] || 0) > 0.55 ? 1 : 0), modern = (t.polity.era || 0) >= 6;
+  if (rnd() < (0.05 + (t.unrest / 100) * 0.25) * (1 + rough * 0.4) - garr / Math.max(n, 1) * 0.5) {
+    const hit = Math.min(garr, 1 + rint(4) + rough + (modern ? 2 : 0));
+    occ.warTired = (occ.warTired || 0) + 0.01 * (1 + rough);
+    if (rough && !t.guerrilla && n > 30) { t.guerrilla = 1; chronT('war', `The hills and woods round ${t.name} fill with guerrillas. The ${occ.name} garrison holds the town by day and nothing at night.`, t); }
     for (let k = 0; k < hit && t.garrison; k++) { const v = t.garrison.soldiers[rint(t.garrison.soldiers.length)]; if (v) killPerson(v, 'killed by partisans'); }
     if (FXH) FXH.burn(t.x, t.y);
     if (!t.garrison || !t.garrison.soldiers.length) { liberate(t, 'rises and throws out'); return; }
@@ -1177,17 +1466,19 @@ function endWar(war, winner, how) {
     adjustRel(p, q, 10);
   }
   for (const B of W.battles.slice()) if (B.war === war) battleEnd(B, rnd() < 0.5 ? 'a' : 'b', true);
+  if (war.cause === 'revolt') revoltOver(war, winner);
   const win = winner === 'a' ? war.leadA : winner === 'b' ? war.leadB : null, lose = winner === 'a' ? war.leadB : winner === 'b' ? war.leadA : null;
   const winSide = winner === 'a' ? war.a : winner === 'b' ? war.b : [], loseSide = winner === 'a' ? war.b : winner === 'b' ? war.a : [];
   // what was taken: the winners keep it, the losers hand it back
   let ceded = 0, returned = 0;
+  const cededNames = [];
   const G = war.goal, totalWin = how === 'conquest' || how === 'capitulation', mag = Math.abs(war.balance || 0);
   // the treaty follows the map: a narrow win keeps a little of what it holds, a crushing one keeps all of it
   const keep = totalWin ? 1 : clamp((mag - 10) / 45, 0.1, 1) * (G.annex !== undefined ? (G.annex || 0.5) : 0.4);
   for (const t of W.towns.slice()) {
     if (!t.occupier || !all.includes(t.occupier) || !all.includes(t.polity)) continue;
     const taker = t.occupier;
-    if (winSide.includes(taker) && (totalWin || t === war.target || rnd() < keep)) { annex(t, taker); ceded++; }
+    if (winSide.includes(taker) && (totalWin || t === war.target || rnd() < keep)) { cededNames.push(t.name); annex(t, taker); ceded++; }
     else { liberate(t, null); returned++; }
   }
   for (const a of W.armies.slice()) if (a.war === war && !a.battle && a.phase !== 'sail') endArmy(a);
@@ -1198,9 +1489,10 @@ function endWar(war, winner, how) {
   W.warDead = (W.warDead || 0) + war.dead;
   const place = (win && win.capital) || (war.leadA.capital) || (war.leadB.capital);
   let terms = '';
-  if (win && lose && lose.alive && (how === 'treaty' || how === 'capitulation')) {
+  if (win && lose && lose.alive && (how === 'treaty' || how === 'capitulation') && war.cause !== 'revolt') {
     if (how === 'capitulation') terms += ` ${lose.name} surrenders unconditionally.`;
-    if (ceded) terms += ` ${lose.name} cedes ${ceded === 1 ? 'a town' : ceded + ' towns'}.`;
+    if (ceded) terms += ` ${lose.name} cedes ${cededNames.length <= 4 ? cededNames.join(', ').replace(/, ([^,]*)$/, ' and $1') : ceded + ' towns'}, the towns it could not win back.`;
+    if (returned) terms += ` ${returned === 1 ? 'One occupied town goes' : returned + ' occupied towns go'} back.`;
     if ((G.vassal || lose.pop < win.pop * 0.45 || how === 'capitulation') && lose.overlord === null && rnd() < (G.vassal || how === 'capitulation' ? 0.9 : 0.4)) { lose.overlord = win.id; terms += ` ${lose.name} becomes a vassal, and pays tribute.`; }
     else if (lose.capital && win.capital) {
       for (const r of [R.GOLD, R.GOODS, R.TOOLS]) { const v = lose.capital.stock[r] * 0.5; lose.capital.stock[r] -= v; win.capital.stock[r] += v; }
@@ -1211,7 +1503,7 @@ function endWar(war, winner, how) {
     if (win.capital && lose.capital) stealMilitary(lose.capital, win.capital, 0.5);
     if (war.cause === 'debts' && win.unpaidBy) delete win.unpaidBy[lose.id];
   } else if (!win && returned) terms = ' Everything goes back as it was.';
-  if (place && (war.dead >= 5 || war.taken)) chronT('war', `The ${war.name} ends after ${Math.max(1, Math.round(yr - war.start))} years and ${war.dead} dead. ${win ? win.name + ' has the better of it.' : 'Nobody really won.'}${terms}`, place);
+  if (place && (war.dead >= 5 || war.taken) && war.cause !== 'revolt') chronT('war', `The ${war.name} ends after ${Math.max(1, Math.round(yr - war.start))} years and ${war.dead} dead. ${win ? win.name + ' has the better of it.' : 'Nobody really won.'}${terms}`, place);
   for (const pol of all) { if (pol.alive) { pol.warCool = Math.max(pol.warCool, 10 + rint(25)); pol.mob = Math.min(pol.mob || 0, 0.2); } }
 }
 // ---- the last resort: a realm that's losing badly and has the missiles will use them ----

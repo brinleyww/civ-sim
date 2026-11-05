@@ -12,8 +12,16 @@ let onDirty = null;          // renderer hook: a tile's appearance changed
 let onLandChange = null;     // renderer hook: a tile became land
 // The tiles on screen (plus a margin), set by the renderer each frame. Work that only shows, like street crowding, is done only in here.
 // Empty until something draws, so a run with no screen skips that work everywhere.
-const VIEW = { x0: 0, y0: 0, x1: -1, y1: -1 }, VIEW_MARGIN = 12;
-const inView = i => { const x = i % W.w, y = (i / W.w) | 0; return x >= VIEW.x0 && x <= VIEW.x1 && y >= VIEW.y0 && y <= VIEW.y1; };
+const VIEW = { x0: 0, y0: 0, x1: -1, y1: -1 }, VIEW_MARGIN = 12, FAR_Z = 1;
+const inView = i => {
+  let x = i % W.w; const y = (i / W.w) | 0;
+  if (W.wrap) { if (x < VIEW.x0) x += W.w; else if (x > VIEW.x1) x -= W.w; }  // the view can run over the date line
+  return x >= VIEW.x0 && x <= VIEW.x1 && y >= VIEW.y0 && y <= VIEW.y1;
+};
+// On a world that wraps east to west (the Earth map), the shorter way from column ax to column bx, across the seam if need be.
+const wdx = (ax, bx) => { let d = bx - ax; if (W.wrap) { const w = W.w; if (d > w / 2) d -= w; else if (d < -w / 2) d += w; } return d; };
+// The tile one step from i in direction k; on a wrapping world a step off one side comes in on the other.
+const stepWrap = (i, k) => { const ni = i + NB_D[k]; if (!W.wrap || !NB_X[k]) return ni; const x = i % W.w; return x === 0 && NB_X[k] < 0 ? ni + W.w : x === W.w - 1 && NB_X[k] > 0 ? ni - W.w : ni; };
 let FXH = null;              // renderer hook: sparks, blood and smoke. Stays null without a screen, so the simulation never depends on it.
 
 function rnd() {
@@ -221,7 +229,7 @@ function findShipPath(a, b, spec) {
   if (pathCache.has(-key - 1)) return null;  // no way through lately (ice, say): asked again after the short cache clears
   if (nodeBudget <= 0) return PATH_BUSY;
   const water = W.water, river = W.river, canal = W.canal, ice = W.ice, lane = W.lane, seaW = W.seaW, w = W.w, bx = b % w, by = (b / w) | 0;
-  const deepOK = spec & 1, riverOK = spec & 2, c1 = spec & 4, c2 = spec & 8, shoal = spec & 16 ? 18 : 6;
+  const deepOK = spec & 1, riverOK = spec & 2, c1 = spec & 4, c2 = spec & 8, shoal = spec & 16 ? 18 : 6, wrap = !!W.wrap, hw = w / 2;
   const open = sid, closed = sid + 1; sid += 2;
   if (sid > 2000000000) { stampA.fill(0); sid = 2; }
   heapN = 0;
@@ -229,7 +237,7 @@ function findShipPath(a, b, spec) {
   hPush(a, 0);
   let n = 0, found = false;
   // an ocean crossing is a long search; a hop down the coast is a short one
-  const span = Math.max(Math.abs(a % w - bx), Math.abs(((a / w) | 0) - by)), maxN = Math.min(260000, Math.max(60000, span * span * 4));
+  const span = Math.max(Math.abs(wdx(a % w, bx)), Math.abs(((a / w) | 0) - by)), maxN = Math.min(260000, Math.max(60000, span * span * 4));
   while (heapN > 0) {
     const cur = hPop();
     if (stampA[cur] === closed) continue;
@@ -237,8 +245,10 @@ function findShipPath(a, b, spec) {
     if (cur === b) { found = true; break; }
     if (++n > maxN) break;
     const g0 = gs[cur];
+    const cx = wrap ? cur % w : -1;
     for (let k = 0; k < 8; k++) {
-      const ni = cur + NB_D[k];
+      let ni = cur + NB_D[k];
+      if (cx === 0 && NB_X[k] < 0) ni += w; else if (cx === w - 1 && NB_X[k] > 0) ni -= w;  // over the date line
       if (stampA[ni] === closed) continue;
       const wa = water[ni];
       let c = shoal;
@@ -258,7 +268,8 @@ function findShipPath(a, b, spec) {
       const g = g0 + c;
       if (stampA[ni] === open && gs[ni] <= g) continue;
       gs[ni] = g; stampA[ni] = open; cf[ni] = cur;
-      const nx = ni % w, ny = (ni / w) | 0, dx = Math.abs(nx - bx), dy = Math.abs(ny - by);
+      const nx = ni % w, ny = (ni / w) | 0, dy = Math.abs(ny - by);
+      let dx = Math.abs(nx - bx); if (wrap && dx > hw) dx = w - dx;
       hPush(ni, g + (dx + dy - 0.586 * Math.min(dx, dy)) * 7);
     }
   }

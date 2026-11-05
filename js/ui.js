@@ -4,7 +4,7 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = n => Math.round(n).toLocaleString('en-US');
-const UI = { filter: 'all', logSeen: -1, logCount: 0, techSel: null, follow: null, followDead: null, slots: new Map(), borders: true, farBlds: true, names: 'all', techRealm: -1, techView: 'tree', mins: {}, allHidden: false };
+const UI = { filter: 'all', logSeen: -1, logCount: 0, techSel: null, follow: null, followDead: null, slots: new Map(), borders: true, blds: 'auto', names: 'all', techRealm: -1, techView: 'tree', mins: {}, allHidden: false };
 
 function toast(msg, ms) {
   const el = $('toast');
@@ -34,14 +34,22 @@ function updateTop() {
   $('sTech').textContent = `${Object.keys(W.firsts).length}/${TECHS.filter(T => !T.start).length}`;
   $('sWar').textContent = W.wars.length;
 }
+// Panels refresh several times a second. Rewriting one that hasn't changed, or that the player is pressing on, loses their click,
+// their hover and their text selection, so those are left alone.
+function setHTML(el, h) {
+  if (el._h === h) return true;
+  if (UI.pressEl && el.contains(UI.pressEl)) return false;
+  el.innerHTML = h; el._h = h;
+  return true;
+}
 function updateRealms() {
   const list = W.polities.filter(p => p.alive && p.pop > 0).sort((a, b) => b.pop - a.pop).slice(0, 40);
-  $('realmList').innerHTML = list.map(p => `<div class="realm" data-pol="${p.id}"><i style="background:${p.color}"></i><div class="n">${esc(p.name)}${Object.keys(p.warsWith).length ? ' <em class="atwar">at war</em>' : ''}<small>${GOV[p.gov].name}${p.geo ? ' · ' + esc(GEO[p.geo].name) : ''} · ${ERAS[p.era || 0]}</small></div><div class="p">${fmt(p.pop)}</div></div>`).join('');
+  setHTML($('realmList'), list.map(p => `<div class="realm" data-pol="${p.id}"><i style="background:${p.color}"></i><div class="n">${esc(p.name)}${Object.keys(p.warsWith).length ? ' <em class="atwar">at war</em>' : ''}<small>${GOV[p.gov].name}${p.geo ? ' · ' + esc(GEO[p.geo].name) : ''} · ${ERAS[p.era || 0]}</small></div><div class="p">${fmt(p.pop)}</div></div>`).join(''));
   const wl = W.wars;
   $('warCount').textContent = wl.length ? `(${wl.length})` : '';
   const fights = W.battles.slice().sort((a, b) => (b.sA.men0 + b.sB.men0) - (a.sA.men0 + a.sB.men0)).slice(0, 8);
   const fightRows = fights.map(B => { const na = B.sA.ok === undefined ? B.sA.men0 : B.sA.ok, nb = B.sB.ok === undefined ? B.sB.men0 : B.sB.ok, f = na / Math.max(na + nb, 1) * 100; return `<div class="battleRow" data-b="${B.id}"><b>${esc(B.name)}</b><div class="vs"><i style="width:${f}%;background:${B.sA.pol.color}"></i><i style="width:${100 - f}%;background:${B.sB.pol.color}"></i></div><small>${esc(B.sA.pol.name)} ${na} · ${nb} ${esc(B.sB.pol.name)}</small></div>`; }).join('');
-  $('warList').innerHTML = fightRows + (wl.length ? wl.slice(-14).reverse().map(w => { const bal = w.balance || 0; const lead = bal > 8 ? w.leadA.name : bal < -8 ? w.leadB.name : ''; return `<div class="warRow" data-war="${w.id}"><b>${esc(w.name)}</b><small>${Math.max(1, Math.floor(year() - w.start))} yrs · ${fmt(w.dead)} dead · ${w.a.length + w.b.length} realms${lead ? ' · ' + esc(lead) + ' ahead' : ''}</small></div>`; }).join('') : '<div class="none">The world is at peace, for now.</div>');
+  setHTML($('warList'), fightRows +(wl.length ? wl.slice(-14).reverse().map(w => { const bal = w.balance || 0; const lead = bal > 8 ? w.leadA.name : bal < -8 ? w.leadB.name : ''; return `<div class="warRow" data-war="${w.id}"><b>${esc(w.name)}</b><small>${Math.max(1, Math.floor(year() - w.start))} yrs · ${fmt(w.dead)} dead · ${w.a.length + w.b.length} realms${lead ? ' · ' + esc(lead) + ' ahead' : ''}</small></div>`; }).join('') : '<div class="none">The world is at peace, for now.</div>'));
 }
 function updateChronicle(force) {
   const log = W.log;
@@ -55,7 +63,7 @@ function updateChronicle(force) {
     const e = log[k];
     if (match(e)) out.push(`<div class="ev ${e.kind}" data-x="${e.x}" data-y="${e.y}" data-t="${e.town}"><b>${e.yr}</b>${esc(e.text)}</div>`);
   }
-  $('log').innerHTML = out.join('');
+  if (!setHTML($('log'), out.join(''))) UI.logSeen = null;  // pressed on just now: try again next time
 }
 
 // ---- the inspector ----
@@ -110,7 +118,8 @@ function updateInspector() {
   else if (s.kind === 'army') { title = s.obj.name; h = armyHTML(s.obj); }
   $('rightName').textContent = title;
   const body = $('rightBody'), scroll = body.scrollTop;
-  body.innerHTML = h;
+  if (body._h === h) return;  // unchanged: keep the player's hover and text selection
+  body.innerHTML = h; body._h = h;
   body.scrollTop = scroll;
 }
 const tagHTML = (T, extra) => `<span class="trait" style="border-color:${T.col};color:${T.col}" title="${esc(T.about)}">${esc(T.name)}${extra || ''}</span>`;
@@ -178,7 +187,8 @@ function townHTML(t) {
   const ks = []; for (let i = 0; i < NT; i++) if (t.tech[i] && !TECHS[i].start) ks.push(TECHS[i]);
   const blds = {};
   for (const b of t.blds) { if (!b.done || b.type === 'hearth') continue; const nm = b.type === 'house' ? HOUSES[b.tier].name : BLD[b.type].name; blds[nm] = (blds[nm] || 0) + 1; }
-  const status = [t.occupier ? `<b style="color:#ff8f7a">Occupied by ${esc(t.occupier.name)}</b>` : '', t.attack ? '<b style="color:#ff8f7a">Under attack</b>' : '', t.sick > 0 ? '<b style="color:#c3e36a">Plague</b>' : '', t.famine > 1 ? '<b style="color:#f0b46a">Famine</b>' : '', t.crowd > 1.15 ? '<b style="color:#f0b46a">Overcrowded</b>' : '', t.unrest > 45 ? '<b style="color:#ff8f7a">Restless</b>' : '', t.blockaded > W.tick ? '<b style="color:#ff8f7a">Blockaded</b>' : ''].filter(Boolean).join(' · ');
+  const rose = t.risings && t.risings[t.risings.length - 1];
+  const status = [t.occupier ? `<b style="color:#ff8f7a">Occupied by ${esc(t.occupier.name)}</b>` : '', t.polity.rebel && !t.polity.rebel.over ? `<b style="color:#ff8f7a">In revolt against ${esc((W.polities[t.polity.rebel.from] || {}).name || 'its realm')} since ${t.polity.rebel.start | 0}</b>` : '', rose && !t.polity.rebel ? `<span>Rose against ${esc(rose.against)} in ${rose.yr}: ${rose.won ? 'won its freedom' : 'crushed'}</span>` : '',t.attack ? '<b style="color:#ff8f7a">Under attack</b>' : '', t.sick > 0 ? '<b style="color:#c3e36a">Plague</b>' : '', t.famine > 1 ? '<b style="color:#f0b46a">Famine</b>' : '', t.crowd > 1.15 ? '<b style="color:#f0b46a">Overcrowded</b>' : '', t.unrest > 45 ? '<b style="color:#ff8f7a">Restless</b>' : '', t.blockaded > W.tick ? '<b style="color:#ff8f7a">Blockaded</b>' : ''].filter(Boolean).join(' · ');
   // what this town is closest to working out
   const prog = [];
   const tot = t.lastTotal || 0;
@@ -274,8 +284,9 @@ function polHTML(p) {
   <h4>Standings with others</h4>
   ${known.length ? known.slice(0, 14).map(o => { const [lab, col] = relLabel(p, o), v = relOf(p, o); return `<div class="standing"><i style="background:${o.color}"></i><a class="link" data-act="pol" data-id="${o.id}">${esc(o.name)}</a><span class="st" style="color:${col}">${lab}</span><div class="rel"><u style="left:${v >= 0 ? 50 : 50 + v / 2}%;width:${Math.abs(v) / 2}%;background:${col}"></u></div></div>`; }).join('') : '<div class="sub">Has met nobody yet.</div>'}
   ${allies.length ? `<div class="sub" style="margin-top:3px">Allied with ${allies.map(o => esc(o.name)).join(', ')}.</div>` : ''}
+  ${grievancesHTML(p)}
   <h4>War</h4>
-  ${wars.length ? wars.map(w => `<div><a class="link" data-act="war" data-id="${w.id}">${esc(w.name)}</a></div>`).join('') + bar('Support at home', p.support, 100, p.support < 30 ? '#e0705a' : '#8cc66a', Math.round(p.support) + '%') : '<div class="sub">At peace.</div>'}${inAssembly(p) ? '<div class="sub">Sends delegates to the World Assembly.</div>' : ''}${W.towns.some(o => o.polity === p && o.count.missilesilo) ? '<div class="sub">Has nuclear missiles: few dare attack it.</div>' : ''}${revolutionHTML(p)}
+  ${wars.length ? wars.map(w => `<div><a class="link" data-act="war" data-id="${w.id}">${esc(w.name)}</a> <span style="color:var(--ink3)">${esc(CAUSE_TEXT[w.cause] || '')}</span></div>`).join('') + bar('Support at home', p.support, 100, p.support < 30 ? '#e0705a' : '#8cc66a', Math.round(p.support) + '%') : '<div class="sub">At peace.</div>'}${inAssembly(p) ? '<div class="sub">Sends delegates to the World Assembly.</div>' : ''}${W.towns.some(o => o.polity === p && o.count.missilesilo) ? '<div class="sub">Has nuclear missiles: few dare attack it.</div>' : ''}${revolutionHTML(p)}
   ${(W.loans || []).some(l => l.to === p.id) ? `<div class="sub">Owes ${(W.loans || []).filter(l => l.to === p.id).map(l => `${fmt(Math.round(l.left))} ${esc(W.polities[l.from].cur.name)}s to ${esc(W.polities[l.from].name)}`).join(', ')}.</div>` : ''}
   <div class="kv"><span>Soldiers</span><b>${fmt(p.soldiers)}</b><span>Armies in the field</span><b>${armies.length}</b><span>Warships</span><b>${warships}</b><span>Merchant ships</span><b>${fleet.length - warships}</b></div>
   ${armies.slice(0, 4).map(a => `<div><a class="link" data-act="army" data-id="${a.id}">${esc(a.name)}</a> <span style="color:var(--ink3)">${a.soldiers.length}</span></div>`).join('')}
@@ -304,14 +315,15 @@ function sideHTML(B, S) {
   const units = S.units.filter(u => u.men.length).slice(0, 8).map(u => `<div class="unitRow"><span>${esc(u.name)}</span><em>${u.men.length}</em><i>${ORDER_NAME[u.order] || u.order}</i></div>`).join('');
   return `<h4 style="color:${S.pol.color}">${esc(S.pol.name)}${S.broken ? ' · broken' : ''}</h4>
   ${bar('Standing', n, Math.max(S.men0, 1), S.pol.color, n)}${bar('Morale', S.morale, 100, '#e6c170', Math.max(0, Math.round(S.morale)))}
-  <div class="sub">${g ? `General <a class="link" data-act="person" data-id="${g.ix}">${esc(g.name)}</a>` : 'No general left'}: ${esc(PLANS[S.plan] || '')}</div>
+  <div class="sub">${g ? `General <a class="link" data-act="person" data-id="${g.ix}">${esc(g.name)}</a>` : 'No general left'}: <b>${esc(PLAN_NAME[S.plan] || '')}</b>. ${esc(PLANS[S.plan] || '')}${S.encircled ? ' <b style="color:#ff8f7a">Surrounded.</b>' : ''}</div>
   <div class="sub">${S.dead} dead · ${S.down} down · ${S.fled} running · ${S.cap} prisoners taken${S.air ? ' · air cover' : ''}</div>
   <div class="tags">${gear}</div>${units}`;
 }
 function battleHTML(B) {
   if (B.over) return `<div class="sub">This is over. ${B.sA.dead + B.sB.dead} died.</div>`;
   const t = B.town;
-  return `<div class="sub">Part of the ${B.war ? `<a class="link" data-act="war" data-id="${B.war.id}">${esc(B.war.name)}</a>` : 'fighting'}, going on for ${Math.floor((W.tick - B.start) / TPY * 12)} months, in ${WX_NAME[B.wx]}.${B.ambush ? ' It began as an ambush.' : ''}</div>
+  return `<div class="sub">Part of the ${B.war ? `<a class="link" data-act="war" data-id="${B.war.id}">${esc(B.war.name)}</a>` : 'fighting'}, going on for ${Math.floor((W.tick - B.start) / TPY * 12)} months, in ${WX_NAME[B.wx]}. ${B.kind && B.kind !== 'siege' ? esc(BATTLE_KIND[B.kind] || '') : ''}${!t && B.openT > W.tick ? ' The skirmishers are at work; the main lines have not closed yet.' : ''}${B.phase === 'pursuit' ? (B.result === 'withdrawal' ? ' One side is falling back in good order.' : ' One side has broken and is being run down.') : ''}${B.lines ? ' The besiegers have dug lines round the town.' : ''}${B.ambush ? ' It began as an ambush.' : ''}${B.nightT ? ' It began as a night attack.' : ''}${B.ford ? ' A river runs between them.' : ''}${B.siegePlan ? ` ${SIEGE_SAY[B.siegePlan]}` : ''}${B.blockade ? ' A fleet blockades the harbour.' : ''}</div>
+  ${B.notes && B.notes.length ? `<div class="sub">${B.notes.map(esc).join(' · ')}</div>` : ''}
   <div class="btnrow"><button data-act="watch" data-id="${B.id}" class="wide">Watch this up close</button></div>
   ${t ? `<div class="sub">${B.stage === 'storm' ? 'They are storming the town.' : 'Encircled, and being worn down.'}${B.hunger ? ' The food has run out.' : ''}${B.breaches ? ` ${B.breaches} breaches in the walls.` : ''}</div>${t.fortMax ? bar('Fortifications', t.fortHP, t.fortMax, '#a5a298', Math.round(t.fortHP)) : ''}` : ''}
   ${sideHTML(B, B.sA)}${sideHTML(B, B.sB)}`;
@@ -331,18 +343,34 @@ function armyHTML(a) {
   ${a.guns.length ? `<h4>Engines</h4><div class="tags">${a.guns.map(g => `<span>${esc(SIEGE[g.type].name)}</span>`).join('')}</div>` : ''}
   ${a.battle ? `<div class="btnrow"><a class="link" data-act="battle" data-id="${a.battle.id}">${esc(a.battle.name)}</a></div>` : ''}`;
 }
+// Why this realm might go to war, and with whom: the same weighing its rulers do each year (war.js warMotive), worked out once a year.
+const JOIN_WHY = { ally: 'as an ally', late: 'later, as an ally', coalition: 'in a coalition', grudge: 'out of an old grudge', money: 'paid, but stayed out' };
+function grievancesHTML(p) {
+  if (!p.alive || !p.capital) return '';
+  const G = grievances(p).slice(0, 6), lh = p.lh || 0;
+  const rows = G.map(g => {
+    const odds = g.power >= 2 ? 'much stronger' : g.power >= 1.3 ? 'stronger' : 'about even';
+    const tr = p.truce[g.foe.id] > year() ? `, truce until ${Math.floor(p.truce[g.foe.id])}` : '';
+    const parts = g.parts.filter(q => q[1] > 1.001).sort((x, y) => y[1] - x[1]).map(q => `${esc(MOTIVE_NAME[q[0]] || q[0])} ×${q[1].toFixed(1)}`).join(', ');
+    const pct = Math.round(g.chance * 100);
+    return `<div class="sub" style="margin-top:3px"><i style="display:inline-block;width:8px;height:8px;background:${g.foe.color};margin-right:4px"></i><a class="link" data-act="pol" data-id="${g.foe.id}">${esc(g.foe.name)}</a>: <b>${esc(MOTIVE_NAME[g.why] || g.why)}</b> (wants ${esc(g.target.name)}). ${odds}, relations ${Math.round(relOf(p, g.foe))}${tr}. War this year: ${govSt(p) < 2 ? 'not yet, it is no state to wage one' : pct < 1 ? 'unlikely' : '~' + pct + '%'}${parts ? `<br><span style="color:var(--ink3)">${parts}</span>` : ''}</div>`;
+  }).join('');
+  return `<h4>Reasons for war</h4>${lh > 0.25 ? `<div class="sub" style="color:#f0b46a">Short of land${p.lhTown ? `: ${esc(p.lhTown.name)} can't find room to build or farm` : ''}.</div>` : ''}${rows || '<div class="sub">No neighbour it could take on, or no reason to.</div>'}${p.warCool > 0 ? `<div class="sub">Not ready for another war for ${p.warCool} years.</div>` : ''}`;
+}
 function warHTML(w) {
   const armies = W.armies.filter(a => a.war === w), battles = W.battles.filter(b => b.war === w);
   const list = L => L.map(p => `<a class="link" data-act="pol" data-id="${p.id}">${esc(p.name)}</a>`).join(', ');
   const bal = w.ended ? 0 : warBalance(w), held = W.towns.filter(t => t.occupier && (w.a.includes(t.occupier) || w.b.includes(t.occupier)) && (w.a.includes(t.polity) || w.b.includes(t.polity)));
   return `<div class="sub">Began year ${Math.floor(w.start)} ${esc(CAUSE_TEXT[w.cause] || '')}${w.ended ? `, ended year ${w.endYear}` : ''}. ${esc(w.leadA.name)} ${esc(w.goal.ask)} ${esc(w.target ? w.target.name : w.leadB.name)}.</div>
   <div class="kv"><span>Side one</span><b>${list(w.a)}</b><span>Side two</span><b>${list(w.b)}</b><span>Dead in battle</span><b>${fmt(w.dead)}</b><span>Battles won</span><b>${w.won[0]} to ${w.won[1]}</b><span>Towns taken</span><b>${w.taken}</b><span>Prisoners</span><b>${w.prisoners || 0}</b><span>Ships sunk</span><b>${w.sunk || 0}</b>${w.campDead ? `<span>Died of sickness, cold and hunger</span><b>${fmt(w.campDead)}</b>` : ''}<span>Under arms</span><b>${fmt(W.armies.filter(a => !a.militia && w.a.includes(a.pol)).reduce((s0, a) => s0 + menOf(a), 0))} to ${fmt(W.armies.filter(a => !a.militia && w.b.includes(a.pol)).reduce((s0, a) => s0 + menOf(a), 0))}</b>${w.convoys ? `<span>Supply trains lost</span><b>${w.convoys}</b>` : ''}</div>
+  <div class="kv"><span>Why</span><b>${esc(MOTIVE_NAME[w.cause] || CAUSE_TEXT[w.cause] || w.cause)}</b><span>Aim</span><b>${esc(w.leadA.name)} ${esc(w.goal.ask)} ${esc(w.target ? w.target.name : w.leadB.name)}</b></div>
+  ${w.joined && w.joined.length ? `<h4>Who joined</h4>${w.joined.map(j => { const q = W.polities[j.id]; return q ? `<div class="sub">${j.yr}: ${polLink(q)} ${esc(JOIN_WHY[j.why] || j.why)}, for ${esc((j.side === 'a' ? w.leadA : w.leadB).name)}</div>` : ''; }).join('')}` : ''}
   ${bar('Who’s winning', 50 + bal / 2, 100, '#e6c170', bal > 8 ? esc(w.leadA.name) : bal < -8 ? esc(w.leadB.name) : 'Even')}
   ${bar('Side one is tired', w.exA, 1, '#c8a45a', Math.round(w.exA * 100) + '%')}${bar('Side two is tired', w.exB, 1, '#c8a45a', Math.round(w.exB * 100) + '%')}
   ${held.length ? `<h4>Occupied</h4>${held.map(t => `<div class="sub">${townLink(t)}: held by ${esc(t.occupier.name)}${t.garrison && t.garrison.soldiers.length ? `, ${t.garrison.soldiers.length} in garrison` : ''}</div>`).join('')}` : ''}
   ${battles.length ? `<h4>Fighting now</h4>${battles.map(b => `<div><a class="link" data-act="battle" data-id="${b.id}">${esc(b.name)}</a></div>`).join('')}` : ''}
   ${armies.length ? `<h4>Armies</h4>${armies.map(a => `<div><a class="link" data-act="army" data-id="${a.id}">${esc(a.name)}</a> <span style="color:var(--ink3)">${a.soldiers.length}, ${esc(a.pol.name)}</span></div>`).join('')}` : ''}
-  ${w.battles.length ? `<h4>Battles</h4>${w.battles.slice(-10).reverse().map(b => `<div class="sub">${b.yr}: ${esc(b.name)}${b.won ? `, won by ${esc(b.won)}, ${b.dead} dead` : ''}</div>`).join('')}` : ''}`;
+  ${w.battles.length ? `<h4>Battles</h4>${w.battles.slice(-10).reverse().map(b => `<div class="sub">${b.yr}: ${esc(b.name)}${b.won ? `, won by ${esc(b.won)}, ${b.dead} dead${b.result === 'withdrawal' ? ', the losers falling back in order' : b.result === 'encircled' ? ', the losers surrounded' : ''}` : ''}</div>`).join('')}` : ''}`;
 }
 // The top panel for whoever the camera is following.
 function updateFocus() {
@@ -351,7 +379,7 @@ function updateFocus() {
   el.hidden = false;
   $('focusName').textContent = `${p.name}, ${Math.floor(ageOf(p))}`;
   $('focusDoing').textContent = taskText(p);
-  $('focusTraits').innerHTML = p.traits.map(k => tagHTML(TRAITS[k])).join('');
+  setHTML($('focusTraits'), p.traits.map(k => tagHTML(TRAITS[k])).join(''));
   const kid = p.lastKid && p.lastKid.alive ? p.lastKid : null;
   const key = `${p.id}.${p.alive}.${kid ? kid.id : 0}`;
   if (UI.focusKey !== key) {

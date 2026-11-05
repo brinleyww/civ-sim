@@ -87,7 +87,19 @@ function setSpeed(s) {
   Game.speed = s;
   document.querySelectorAll('#speed button').forEach(b => b.classList.toggle('on', +b.dataset.sp === s));
 }
+// A crash anywhere in a frame used to stop the game for good: now it pauses, tells the player, and sends the owner a report.
 function frame(now) {
+  try { frameBody(now); }
+  catch (err) {
+    console.error(err);
+    reportCrash(err, Game.speed ? 'while running' : 'while paused');
+    if (Game.speed) setSpeed(0);
+    if (!(Game.crashT > now - 8000)) { Game.crashT = now; toast('Something went wrong, so the game has paused. A crash report was sent to the maker. Press play to carry on.', 7000); }
+    Game.last = now;
+  }
+  requestAnimationFrame(frame);
+}
+function frameBody(now) {
   const dt = Math.min(0.1, (now - Game.last) / 1000);
   Game.last = now;
   runSim(dt);
@@ -97,7 +109,9 @@ function frame(now) {
     if (p.alive) {
       if (p.aboard) shipPos(p.aboard, _pos); else personPos(p, _pos);
       const c = Render.cam, q = Math.min(1, dt * 7);
-      c.x += (_pos.x - Render.vw / 2 / c.z - c.x) * q; c.y += (_pos.y - Render.vh / 2 / c.z - c.y) * q;
+      let gx = _pos.x - Render.vw / 2 / c.z - c.x;
+      if (W.wrap) { const pw = W.w * TS; gx = ((gx % pw) + pw * 1.5) % pw - pw / 2; }  // follow them over the date line, not back round the world
+      c.x += gx * q; c.y += (_pos.y - Render.vh / 2 / c.z - c.y) * q;
       clampCam();
     } else { UI.followDead = p; UI.follow = null; toast(`${p.name} has died (${p.cause}).`, 4000); }
   }
@@ -119,7 +133,6 @@ function frame(now) {
     chron('collapse', 'The last person in the world has died.');
     toast('Everyone has died. Use New tribe to start again here, or begin a new world.', 8000);
   } else if (W.people.length) W.emptyNote = false;
-  requestAnimationFrame(frame);
 }
 function runSim(dt) {
   if (!Game.speed || !W) return;
@@ -127,7 +140,9 @@ function runSim(dt) {
   let n = 0;
   // the screen always gets its time: whatever speed is asked for, the sim only ever takes what's left of the frame
   // at the fast settings the sim takes the larger share of each frame, so a huge world still rushes through the years
-  const budget = Game.speed >= 999 ? 44 : Game.speed >= 30 ? 26 : Game.speed >= 10 ? 15 : Math.max(5, 10 - Game.drawMs * 0.5);
+  let budget = Game.speed >= 999 ? 44 : Game.speed >= 30 ? 26 : Game.speed >= 10 ? 15 : Math.max(5, 10 - Game.drawMs * 0.5);
+  // while someone is dragging, zooming or typing, the screen comes first: the years can rush again a moment after they let go
+  if (t0 - (Game.touchT || 0) < 350) budget = Math.min(budget, 10);
   if (Game.speed >= 999) {
     while (performance.now() - t0 < budget) { stepWorld(); Game.ticksThisSec++; n++; }
   } else {
@@ -189,13 +204,21 @@ function panKeys(dt) {
 // ---- mouse ----
 function screenToTile(sx, sy) {
   const c = Render.cam;
-  const x = Math.floor((sx / c.z + c.x) / TS), y = Math.floor((sy / c.z + c.y) / TS);
+  let x = Math.floor((sx / c.z + c.x) / TS); const y = Math.floor((sy / c.z + c.y) / TS);
+  if (W.wrap) x = ((x % W.w) + W.w) % W.w;  // the copy of the world to the east or west is the same world
   if (x < 0 || y < 0 || x >= W.w || y >= W.h) return -1;
   return y * W.w + x;
 }
+// How far across the screen a point of the world lies from the cursor; on a wrapping world, from whichever copy is nearer.
+function scrDX(wx, sx) {
+  const c = Render.cam;
+  let d = wx - (sx / c.z + c.x);
+  if (W.wrap) { const pw = W.w * TS; d = ((d % pw) + pw * 1.5) % pw - pw / 2; }
+  return d * c.z;
+}
 function pickAt(sx, sy) {
   for (const h of Render.battleHits || []) if (Math.abs(h.x - sx) < (h.w || 14) && Math.abs(h.y - sy) < (h.h || 14)) return { kind: 'battle', obj: h.B };
-  for (const A of W.armies) { if (A.battle || !A.soldiers.length) continue; const c = Render.cam, ax = ((A.x + 0.5) * TS - c.x) * c.z, ay = ((A.y + 0.5) * TS - c.y) * c.z - 18; if (Math.abs(ax + 4 - sx) < 12 && Math.abs(ay - sy) < 14) return { kind: 'army', obj: A }; }
+  for (const A of W.armies) { if (A.battle || !A.soldiers.length) continue; const c = Render.cam, ax = scrDX((A.x + 0.5) * TS, sx), ay = ((A.y + 0.5) * TS - c.y) * c.z - 18; if (Math.abs(ax + 4) < 12 && Math.abs(ay - sy) < 14) return { kind: 'army', obj: A }; }
   for (const L of Render.labels) if (sx >= L.x && sx <= L.x + L.w && sy >= L.y && sy <= L.y + L.h) return { kind: 'town', obj: L.t };
   const c = Render.cam, z = c.z;
   if (z >= 0.9) {
@@ -203,7 +226,7 @@ function pickAt(sx, sy) {
     for (const p of W.people) {
       if (p.hidden) continue;
       personPos(p, _pos);
-      const dx = (_pos.x - c.x) * z - sx, dy = (_pos.y - c.y) * z - sy, d = Math.hypot(dx, dy);
+      const dx = scrDX(_pos.x, sx), dy = (_pos.y - c.y) * z - sy, d = Math.hypot(dx, dy);
       if (d < bd) { bd = d; best = p; }
     }
     if (best) return { kind: 'person', obj: best };
@@ -212,7 +235,7 @@ function pickAt(sx, sy) {
     let best = null, bd = Math.max(16, z * 9);
     for (const s of W.ships) {
       shipPos(s, _pos);
-      const d = Math.hypot((_pos.x - c.x) * z - sx, (_pos.y - c.y) * z - sy + z * 3);
+      const d = Math.hypot(scrDX(_pos.x, sx), (_pos.y - c.y) * z - sy + z * 3);
       if (d < bd) { bd = d; best = s; }
     }
     if (best) return { kind: 'ship', obj: best };
@@ -223,12 +246,19 @@ function pickAt(sx, sy) {
   if (b && b.type === 'hearth' && b.town) return { kind: 'town', obj: b.town };
   if (b) return { kind: 'building', obj: b };
   const own = W.townById[W.owner[i]];
-  if (own && Math.hypot(tx(i) - own.x, ty(i) - own.y) < 3) return { kind: 'town', obj: own };
+  if (own && Math.hypot(wdx(own.x, tx(i)), ty(i) - own.y) < 3) return { kind: 'town', obj: own };
   return { kind: 'tile', obj: i };
 }
 function initInput() {
   const cv = $('game');
   let drag = null;
+  // when the player last touched anything (runSim gives the screen more of the frame just after), and what they are pressing on
+  const touch = () => { Game.touchT = performance.now(); };
+  window.addEventListener('mousedown', e => { touch(); UI.pressEl = e.target; }, true);
+  window.addEventListener('mouseup', () => { UI.pressEl = null; }, true);
+  window.addEventListener('mousemove', e => { if (e.buttons) touch(); }, true);
+  window.addEventListener('wheel', touch, { capture: true, passive: true });
+  window.addEventListener('keydown', touch, true);
   cv.addEventListener('mousedown', e => {
     if (Game.power && isBrush(Game.power)) { beginStroke(e.clientX, e.clientY); return; }
     drag = { x: e.clientX, y: e.clientY, cx: Render.cam.x, cy: Render.cam.y, moved: false }; cv.classList.add('drag');
@@ -265,7 +295,7 @@ function initInput() {
   }, { passive: false });
   window.addEventListener('resize', () => { resize(); });
   window.addEventListener('keydown', e => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || !W) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA' || !W) return;
     const k = e.key.toLowerCase();
     if (!$('startup').hidden) return;
     if (k === ' ') { e.preventDefault(); setSpeed(Game.speed ? 0 : (Game.lastSpeed || 1)); if (Game.speed === 0) return; }
@@ -303,8 +333,8 @@ function initInput() {
   $('bBorders').onclick = toggleBorders;
   $('bNames').onclick = cycleNames;
   $('bNames').textContent = NAMES_TEXT[UI.names];
-  $('bFar').onclick = toggleFarBlds;
-  $('bFar').classList.toggle('on', UI.farBlds);
+  $('bFar').onclick = cycleBlds;
+  $('bFar').textContent = BLDS_TEXT[UI.blds];
   $('bHide').onclick = toggleAll;
   document.addEventListener('click', e => {
     const k = e.target.dataset ? e.target.dataset.min : null;
@@ -390,7 +420,7 @@ function initInput() {
 }
 function closeModals() {
   let any = false;
-  for (const id of ['techModal', 'statsModal', 'helpModal', 'econModal']) if (!$(id).hidden) { $(id).hidden = true; any = true; }
+  for (const id of ['techModal', 'statsModal', 'helpModal', 'econModal', 'fbModal']) if (!$(id).hidden) { $(id).hidden = true; any = true; }
   return any;
 }
 function hoverTip(sx, sy) {
@@ -507,7 +537,8 @@ function powerOnce(p, sx, sy, k) {
     case 'revolt':
       if (!t) { toast('No settlement close enough.'); return false; }
       if (t.polity.capital === t || t.nomad) { toast('The capital can’t break away from itself.'); return false; }
-      secede(t.polity, t, 14); updateTerritory(); break;
+      if (!startRevolt(t.polity, t)) secede(t.polity, t, 14);
+      updateTerritory(); break;
   }
   return true;
 }
@@ -631,9 +662,11 @@ function cycleNames() {
   try { localStorage.setItem('aod-names', UI.names); } catch (e) {}
 }
 function toggleBorders() { UI.borders = !UI.borders; $('bBorders').classList.toggle('on', UI.borders); }
-function toggleFarBlds() {
-  UI.farBlds = !UI.farBlds; $('bFar').classList.toggle('on', UI.farBlds);
-  try { localStorage.setItem('aod-farblds', UI.farBlds ? '1' : '0'); } catch (e) {}
+const BLDS_TEXT = { auto: 'Buildings: auto', on: 'Buildings: on', off: 'Buildings: off' };
+function cycleBlds() {
+  UI.blds = UI.blds === 'auto' ? 'on' : UI.blds === 'on' ? 'off' : 'auto';
+  $('bFar').textContent = BLDS_TEXT[UI.blds];
+  try { localStorage.setItem('aod-blds', UI.blds); } catch (e) {}
 }
 function applyMins() {
   const M = UI.mins;
@@ -725,6 +758,6 @@ async function loadGame() {
 
 try { UI.mins = JSON.parse(localStorage.getItem('aod-panels')) || {}; } catch (e) { UI.mins = {}; }
 try { const v = localStorage.getItem('aod-names'); if (NAMES_TEXT[v]) UI.names = v; } catch (e) {}
-try { if (localStorage.getItem('aod-farblds') === '0') UI.farBlds = false; } catch (e) {}
+try { const v = localStorage.getItem('aod-blds'); if (BLDS_TEXT[v]) UI.blds = v; } catch (e) {}
 initInput();
 initStart();

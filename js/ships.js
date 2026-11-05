@@ -3,6 +3,20 @@
 
 const LIST_OF = s => s.kind === 'war' ? WARSHIPS : MERCHANTMEN;
 const shipDef = s => LIST_OF(s)[s.type];
+// Tiles a tick. Under sail or oar a hull makes a few times a walker's pace; an engine many times it, and a modern freighter crosses an ocean in weeks.
+const hullSpd = D => D.spd * (D.burn !== undefined || (D.cost && (D.cost[R.COAL] || D.cost[R.OIL] || D.cost[R.URANIUM])) ? 1.5 : 1);
+// What a hull really carries, in loads (a load is about a person's food for a season, some 60 kg): a dugout half a tonne, a knarr
+// some 25 tonnes, a carrack 600, a clipper 1500, a container ship tens of thousands, compressed towards the top so a giant hull
+// doesn't swallow a whole city's stores. D.cap stays the hull's size (which berths, fuel, big or small). The hull itself is the
+// shipping technology: inventions for carts and caravans don't make a ship's hold bigger, only better quays and cargo handling do.
+const HOLD = {
+  reedboat: 20, dugout: 12, outrigger: 40, rbarge: 280, barque: 320, knarr: 400, merchgalley: 800, dhow: 650, grainship: 2600, cog: 1200,
+  junk: 3000, caravel: 950, carrack: 3600, fluyt: 4000, indiaman: 5200, clipper: 6000, paddlesteamer: 2200, steamer: 10000, reefer: 8500,
+  coaster: 3500, tanker: 22000, freighter: 26000, hovercraft: 500, roroship: 18000, autocargo: 34000, rotorship: 30000,
+  bulker: 34000, collier: 13000, supertanker: 60000, gascarrier: 45000, megabox: 80000, orecarrier: 90000,
+};
+for (const D of MERCHANTMEN) D.hold = HOLD[D.id] || D.cap * 12;
+const holdOf = (D, t) => D.hold * clamp(1 + Math.log(Math.max(1, t.mod.cargo)) * 0.06, 1, 1.25);
 const SHIP_NAMES_A = ['Swift', 'Grey', 'Lucky', 'Sea', 'Salt', 'Morning', 'Evening', 'Golden', 'Iron', 'Silver', 'Wandering', 'Faithful', 'Bold', 'Northern', 'Southern', 'Merry', 'Stormy', 'Patient'];
 const SHIP_NAMES_B = ['Gull', 'Star', 'Wave', 'Maiden', 'Fortune', 'Heron', 'Dolphin', 'Wind', 'Crown', 'Rose', 'Promise', 'Tern', 'Pilgrim', 'Lady', 'Horizon'];
 
@@ -52,7 +66,7 @@ function findSeaPartners(t) {
     if (o === t || !o.portLv || o.nomad) continue;
     const q = portOf(o);
     if (q < 0 || W.seaNet[q] !== net) continue;  // no water between them, no trade by water
-    const d = Math.hypot(o.x - t.x, o.y - t.y);
+    const d = Math.hypot(wdx(t.x, o.x), o.y - t.y);  // across the date line on the Earth map
     if (d <= R0) list.push({ o, d });
   }
   list.sort((a, b) => a.d - b.d);
@@ -64,7 +78,7 @@ function findSeaPartners(t) {
       if (o === t || !o.portLv || o.nomad || W.landId[o.i] === W.landId[t.i] || t.seaPartners.includes(o) || atWar(t.polity, o.polity)) continue;
       const q = portOf(o);
       if (q < 0 || W.seaNet[q] !== net) continue;
-      far.push({ o, v: tn(o) / (Math.hypot(o.x - t.x, o.y - t.y) + 40) });
+      far.push({ o, v: tn(o) / (Math.hypot(wdx(t.x, o.x), o.y - t.y) + 40) });
     }
     far.sort((a, b) => b.v - a.v);
     for (let k = 0; k < far.length && k < 3; k++) t.seaPartners.push(far[k].o);
@@ -95,6 +109,12 @@ function overseasSite(t) {
   return best;
 }
 // Yearly: does this port want another hull, and can it pay for one?
+// The seas hold as many hulls as the world's trade can use: about one seagoing ship per hundred people, within what the computer can sail.
+function shipCap() {
+  const y = Math.floor(W.tick / TPY);
+  if (W._shipCapY !== y) { W._shipCapY = y; W._shipCap = clamp(worldPop() / 100, W.shipMax, 600); }
+  return W._shipCap;
+}
 function planShips(t) {
   if (!t.portLv || t.nomad || t.shipQ) return;
   const fleet = t.ships;
@@ -102,7 +122,7 @@ function planShips(t) {
   for (const s of fleet) { if (s.kind === 'war') war++; else mer++; }
   const m = t.mod;
   const atWarNow = Object.keys(t.polity.warsWith).length > 0;
-  if (t.navy > 0 && W.ships.length < W.shipMax) {
+  if (t.navy > 0 && W.ships.length < shipCap()) {
     const wantW = Math.ceil((t.navy * (atWarNow ? 5 : 2)) * (m.fleet || 1));
     // a balanced fleet: mostly ships of the line, escorts to hunt submarines, then whatever special hulls the realm has learned to build
     const have = {};
@@ -127,9 +147,12 @@ function planShips(t) {
   // bulk hulls are counted on their own: a full fleet of small traders doesn't stop a big port laying one down,
   // and when the seas are full the two oldest small hulls at the quay are sold to make way for it
   let ty = bulkWant(t, fleet, mer);
-  if (ty >= 0 && W.ships.length >= W.shipMax && !retireSmall(t, 2)) ty = -1;
+  if (ty >= 0 && W.ships.length >= shipCap() && !retireSmall(t, 2)) ty = -1;
   if (ty >= 0) { pay(t.stock, MERCHANTMEN[ty].cost); t.shipQ = { kind: 'trade', type: ty, prog: 0, need: 240 + MERCHANTMEN[ty].hp * 2 }; return; }
-  if (mer >= wantM || W.ships.length >= W.shipMax) return;
+  // a fleet that sails half empty doesn't need another hull; one that keeps sailing near empty sells its smallest
+  const fill = t.shipFill === undefined ? 0.5 : t.shipFill;
+  if (mer > 2 && fill < 0.12) { retireSmall(t, 1); t.shipFill = 0.3; return; }
+  if (mer >= wantM || W.ships.length >= shipCap() || (mer >= 2 && fill < 0.25)) return;
   for (let k = MERCHANTMEN.length - 1; k >= 0; k--) {
     const D = MERCHANTMEN[k];
     if (D.bulk || (D.techI >= 0 && !t.tech[D.techI]) || D.port > t.portLv) continue;
@@ -228,7 +251,7 @@ function launchShip(t, q) {
   if (!W.firstShip && q.kind === 'trade') { W.firstShip = true; chronT('tech', `The first trading vessel, the ${s.name}, slides off the slip at ${t.name}.`, t); }
   if (q.kind === 'trade' && D.bulk) {
     const F = W.bulkFirst || (W.bulkFirst = {});
-    if (!F[D.id]) { F[D.id] = 1; chronT('tech', `${t.name} launches the ${s.name}, the first ${D.name.toLowerCase()}: ${D.cap} loads in a single hull.`, t); }
+    if (!F[D.id]) { F[D.id] = 1; chronT('tech', `${t.name} launches the ${s.name}, the first ${D.name.toLowerCase()}: ${D.hold.toLocaleString('en')} loads in a single hull.`, t); }
   }
   if (q.kind === 'war' && t.navy && !t.polity.firstWarship) { t.polity.firstWarship = true; if (t.polity.pop > 80) chronT('war', `The military port of ${t.name} launches the first warship of ${t.polity.name}, the ${s.name}.`, t); }
   return s;
@@ -254,7 +277,7 @@ function setCourse(s, to) {
 // Everything a port trades must leave on a hull and come back on one.
 function loadShip(s, from, to) {
   s.cargo.fill(0); s.load = 0;
-  const D = shipDef(s), cap = D.cap * from.mod.cargo;
+  const D = shipDef(s), cap = holdOf(D, from);
   if (D.hauls) {  // only its own kind of cargo, and no more than the far end is short of
     for (const r of D.hauls) {
       if (s.load >= cap) break;
@@ -345,10 +368,10 @@ function shipThink(s) {
     if (relOf(h.polity, o.polity) < -55) continue;
     // no quay there that can take a hull this size, or this cargo: the port loses the trade (and notices)
     if (!canBerth(o, D0)) { const st = portStat(o); st.turn++; st.turnCk = D0.ck || 'gen'; continue; }
-    const out = exportTo(h, o, D0), back = exportTo(o, h, D0);
+    const out = exportTo(h, o, D0), back = exportTo(o, h, D0), fair = Math.min(D0.hold, D0.cap * 3);  // a part cargo worth the passage
     // a short hop to a town down the road goes cheaper by cart, pack train or lorry: the ship stays in port
-    if (landBeats(h, o, D0, Math.max(out, back, D0.cap * 0.2))) continue;
-    const sc = (out > D0.cap * 0.1 ? 1 : 0) + (back > D0.cap * 0.1 ? 1 : 0) + Math.min(out + back, D0.cap) / D0.cap + rnd() * 0.5 - (bulkHome && Math.hypot(o.x - h.x, o.y - h.y) > 90 ? 0.8 : 0);
+    if (landBeats(h, o, D0, Math.max(out, back, fair * 0.2))) continue;
+    const sc = (out > fair * 0.1 ? 1 : 0) + (back > fair * 0.1 ? 1 : 0) + Math.min(out + back, fair) / fair + rnd() * 0.5 - (bulkHome && Math.hypot(o.x - h.x, o.y - h.y) > 90 ? 0.8 : 0);
     if (sc > bs) { bs = sc; best = o; }
   }
   // not worth sailing: nothing to carry either way, or nowhere to carry it
@@ -401,8 +424,10 @@ function handlingDone(s) {
     const o = s.dest;
     if (!o || !o.alive) { releaseBerth(s); idleAt(s, h); return; }
     loadShip(s, h, o);
+    // how full the port's ships sail: owners order hulls when they're full and sell them when they sail empty (planShips)
+    { const D1 = shipDef(s); h.shipFill = (h.shipFill === undefined ? 0.5 : h.shipFill) * 0.85 + Math.min(1, s.load / Math.min(D1.hold, D1.cap * 3)) * 0.15; }
     // an empty run there and back isn't worth the crew's wages and the dues: unload again and wait for trade
-    if (s.load < shipDef(s).cap * 0.06 && exportTo(o, h, shipDef(s)) < shipDef(s).cap * 0.1) { unloadShip(s, h); releaseBerth(s); idleAt(s, h); s.wait += 60; return; }
+    if (s.load < Math.min(shipDef(s).hold, shipDef(s).cap * 3) * 0.06 && exportTo(o, h, shipDef(s)) < Math.min(shipDef(s).hold, shipDef(s).cap * 3) * 0.1) { unloadShip(s, h); releaseBerth(s); idleAt(s, h); s.wait += 60; return; }
     depart(s, o, 0);
   } else if (ph === 'unload') {
     const o = t;
@@ -599,7 +624,7 @@ function shipTick() {
       }
     }
     // on a charted lane the pilots know every current and shoal, and ships make better time; a big hull crawls in shallow water
-    s.frac += def.spd * (0.8 + m * 0.2) * (W.lane[s.at] >= SEA_LANE ? 1.15 : 1) * (big && W.water[s.at] === 1 ? SHOAL_SPEED : 1) * give;
+    s.frac += hullSpd(def) * (0.8 + m * 0.2) * (W.lane[s.at] >= SEA_LANE ? 1.15 : 1) * (big && W.water[s.at] === 1 ? SHOAL_SPEED : 1) * give;
     while (s.frac >= 1 && s.path) {
       s.frac -= 1; s.pi++;
       if (s.pi >= s.path.length - 1) { s.at = s.path[s.path.length - 1]; s.nx = s.at; s.frac = 0; shipArrive(s); break; }
@@ -772,9 +797,10 @@ function trainHeld(r, k) {
 // with running lengths `c`: apron, taxiway, runway start, lift-off, climb-out, final approach, touchdown, roll-out, taxiway, apron.
 // cruise: tiles a tick at height. alt: cruising height in screen pixels at zoom 1. climb: height gained per tile flown. cap: freight aboard.
 const PLANE_KIND = [
-  { name: 'propliner', cruise: 0.55, alt: 15, climb: 1.5, cap: 3 },
-  { name: 'jetliner', cruise: 0.95, alt: 24, climb: 1.7, cap: 6 },
-  { name: 'widebody', cruise: 1.05, alt: 28, climb: 1.4, cap: 14 },
+  // cap: freight in the belly, in loads (some 60 kg each): a propliner a couple of tonnes, a jet's hold ten or fifteen, a widebody's thirty-odd
+  { name: 'propliner', cruise: 0.55, alt: 15, climb: 1.5, cap: 40 },
+  { name: 'jetliner', cruise: 0.95, alt: 24, climb: 1.7, cap: 220 },
+  { name: 'widebody', cruise: 1.05, alt: 28, climb: 1.4, cap: 560 },
 ];
 const FL_RUN = 2, FL_UP = 3, FL_FIX = 5, FL_DOWN = 6, FL_STOP = 7, HOLD_LAP = 30, HOLD_STEP = 6.2832 / HOLD_LAP;
 let airList = [], airListT = -1e9, airListW = null;
@@ -844,7 +870,7 @@ function launchFlight(A) {
   const c = [0];
   for (let k = 2; k < p.length; k += 2) c.push(c[c.length - 1] + Math.hypot(p[k] - p[k - 2], p[k + 1] - p[k - 1]));
   // a little freight in the hold, paid for on landing
-  const K = PLANE_KIND[kind], cap = K.cap * ta.mod.cargo;
+  const K = PLANE_KIND[kind], cap = K.cap;
   let res = bestCargo(ta, tb, cap), amt = 0;
   if (res >= 0) { amt = Math.min(cap, ta.stock[res] - wantOf(ta, res) * 0.9); if (amt > 0) ta.stock[res] -= amt; else { res = -1; amt = 0; } }
   // eastbound and westbound traffic cruise at different heights, and every other flight a little higher again

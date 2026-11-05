@@ -633,12 +633,15 @@ function subPath(R0, s, e) {
 // Called inside the world transform (1 unit = 1 terrain pixel), after the terrain and before trees and buildings.
 function drawRoadNet(ctx, z) {
   const N = W.roadNet;
+  const c = Render.cam, x0 = c.x / TS, y0 = c.y / TS, x1 = x0 + Render.vw / z / TS, y1 = y0 + Render.vh / z / TS;
+  // the junctions of the worn-in streets, on the tile grid (junctions.js)
+  if (typeof drawStreetJunctions === 'function') drawStreetJunctions(ctx, z, x0, y0, x1, y1);
   if (!N || !N.roads.length) return;
   if (roadPathV !== N.v) { roadPathCache.clear(); roadPathV = N.v; }
-  const c = Render.cam, x0 = c.x / TS, y0 = c.y / TS, x1 = x0 + Render.vw / z / TS, y1 = y0 + Render.vh / z / TS;
   const vis = [];
   for (const R0 of N.roads) if (R0.bx1 > x0 && R0.bx0 < x1 && R0.by1 > y0 && R0.by0 < y1) vis.push(R0);
   if (!vis.length) return;
+  const JX = typeof drawJunctionRamps === 'function';
   ctx.save();
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   vis.sort((a, b) => RT[a.type].wid - RT[b.type].wid);
@@ -661,6 +664,8 @@ function drawRoadNet(ctx, z) {
       ctx.strokeStyle = '#b8b2a4'; ctx.lineWidth = T.wid * TS * 1.32; ctx.stroke(sp);
     }
   }
+  // the slip roads and loops of the interchanges, under the roads they join
+  if (JX) drawJunctionRamps(ctx, z, x0, y0, x1, y1);
   // casing (verges and kerbs), then the surface, so junctions merge cleanly
   for (const R0 of vis) {
     if (!R0.done) continue;
@@ -680,6 +685,7 @@ function drawRoadNet(ctx, z) {
     if (!far) { ctx.fillStyle = '#5f8f48'; ctx.beginPath(); ctx.arc(nd.x * TS, nd.y * TS, nd.r * TS * 0.45, 0, 6.283); ctx.fill(); }
   }
   if (!far) for (const R0 of vis) { if (R0.done) drawMarkings(ctx, R0, z); }
+  if (JX) { drawJunctionTops(ctx, z, x0, y0, x1, y1); drawJunctionMarks(ctx, z, x0, y0, x1, y1); }
   ctx.restore();
 }
 function drawMarkings(ctx, R0, z) {

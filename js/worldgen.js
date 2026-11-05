@@ -252,7 +252,10 @@ function genWorld(opt) {
       for (let k = 0; k < 8 && !shore; k++) { const ni = (y + NB_Y[k]) * w + x + NB_X[k]; if (ni >= 0 && ni < n && elev[ni] <= 0) shore = true; }
       if (shore && biome[i] !== B.MARSH) biome[i] = B.BEACH;
     }
-    if (i % w === 0 || i % w === w - 1 || i < w || i >= n - w) { water[i] = 3; river[i] = 0; biome[i] = B.DEEP; }
+    // the rim of the map is a wall of water nobody crosses; on the Earth the east and west edges are one strait instead (the Bering, at 169°W),
+    // open sea that ships sail straight across, since the world wraps round there
+    if (i < w || i >= n - w) { water[i] = 3; river[i] = 0; biome[i] = B.DEEP; }
+    else if (i % w === 0 || i % w === w - 1) { water[i] = type === 'earth' ? 2 : 3; river[i] = 0; biome[i] = B.DEEP; if (type === 'earth') elev[i] = Math.min(elev[i], -0.2); }
   }
 
   // ---- every water body has a name and a place in the drainage: creek into stream into river into lake into sea ----
@@ -288,7 +291,7 @@ function genWorld(opt) {
   }
 
   const world = {
-    w, h, seed, type, cfg: opt, tick: 0, nextId: 1, rs: 0, maxPop: opt.maxPop || 5000, inv: opt.inv || 1, eq, latRow,
+    w, h, seed, type, wrap: type === 'earth' ? 1 : 0, cfg: opt, tick: 0, nextId: 1, rs: 0, maxPop: opt.maxPop || 5000, inv: opt.inv || 1, eq, latRow,
     elev, temp, moist, biome, river, water, down, shoreDist, body, bodies, riverId, rivers,
     lane: new Uint8Array(n), canal: new Uint8Array(n), canalId: new Int16Array(n), canals: [], lanes: new Uint8Array(n), tileN: new Uint8Array(n), snowD: new Uint8Array(n), ice: new Uint8Array(n), seaNet: new Int32Array(n), storms: [], clim: { t: 0, phase: rnd() * 6.283, note: 0, co2: 0 },
     tree: new Uint8Array(n), baseTree: new Uint8Array(n), forage: new Uint8Array(n), baseForage: new Uint8Array(n),
@@ -332,7 +335,7 @@ function genWorld(opt) {
     world.fert[i] = world.baseFert[i] = clamp(fe, 0, 255);
   }
 
-  // ---- deposits come in clusters; tin is rare, which is why bronze needs trade ----
+  // ---- deposits come in clusters; tin is scarcer than copper, so some bronze still needs trade ----
   const lands = []; for (let i = 0; i < n; i++) if (!water[i]) lands.push(i);
   const place = (ore, count, rad, amt, ok) => {
     let made = 0;
@@ -365,7 +368,9 @@ function genWorld(opt) {
   }
   const high = v => i => elev[i] > v;
   place(ORE.COPPER, Math.max(6, L / 2600), 3, 700, i => elev[i] > 0.2 && elev[i] < 0.55);
-  place(ORE.TIN, Math.max(3, L / 10000), 2, 450, i => elev[i] > 0.28);
+  // tin: lodes in the granite hills, and tin-stone washed down into the gravels of the valleys below them
+  place(ORE.TIN, Math.max(5, L / 4500), 2.4, 650, i => elev[i] > 0.24);
+  place(ORE.TIN, Math.max(3, L / 7000), 1.8, 400, i => elev[i] > 0.1 && elev[i] <= 0.24);
   place(ORE.GEMS, Math.max(3, L / 9000), 1.6, 220, high(0.34));
   place(ORE.SULFUR, Math.max(3, L / 8000), 1.6, 380, high(0.42));
   place(ORE.URANIUM, Math.max(2, L / 15000), 1.6, 300, high(0.28));
@@ -464,7 +469,7 @@ function linkSeaNet() {
     if (net[s] || !ok(s)) continue;
     id++;
     let sp = 0; st[sp++] = s; net[s] = id;
-    while (sp) { const i = st[--sp]; for (let k = 0; k < 8; k++) { const ni = i + NB_D[k]; if (ni >= 0 && ni < n && !net[ni] && ok(ni)) { net[ni] = id; st[sp++] = ni; } } }
+    while (sp) { const i = st[--sp]; for (let k = 0; k < 8; k++) { const ni = stepWrap(i, k); if (ni >= 0 && ni < n && !net[ni] && ok(ni)) { net[ni] = id; st[sp++] = ni; } } }
   }
 }
 function waterNameAt(i) {

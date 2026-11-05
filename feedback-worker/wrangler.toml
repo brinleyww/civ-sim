@@ -1,0 +1,7 @@
+name = "civ-sim-feedback"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+[[kv_namespaces]]
+binding = "FEEDBACK"
+id = "a0b54e0534614ff4819d1fcafc8cd7bb"

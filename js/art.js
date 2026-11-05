@@ -321,31 +321,45 @@ function planeSprite(kind, polCol, shadow) {
   const key = `air${kind}.${polCol}.${shadow ? 1 : 0}`;
   let c = artCache.get(key);
   if (c) return c;
-  const S = [20, 26, 34][kind], cy = S / 2;
-  c = document.createElement('canvas'); c.width = S; c.height = S;
+  // drawn at three times its size on the art grid and scaled down (c.k) for smooth edges when it turns; nose to the east
+  const S = [20, 26, 34][kind], cy = S / 2, X = 3;
+  c = document.createElement('canvas'); c.width = S * X; c.height = S * X;
   const g = c.getContext('2d');
-  const r = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  g.scale(X, X);
   const poly = (col, ...pts) => { g.fillStyle = col; g.beginPath(); g.moveTo(pts[0], pts[1]); for (let k = 2; k < pts.length; k += 2) g.lineTo(pts[k], pts[k + 1]); g.closePath(); g.fill(); };
-  const body = '#eef0f2', wing = '#d4d9de', eng = '#8c939a';
+  const body = '#f2f4f6', bodyLo = '#c9ced3', wing = '#d8dde2', wingLo = '#aab1b8', eng = '#7c838a', glass = '#2a3846';
+  // a fuselage: rounded nose, tapered tail, a shaded underside, a row of windows and the cockpit glass
+  const fuselage = (x0, x1, h) => {
+    g.fillStyle = body; g.beginPath(); g.moveTo(x0, cy - h * 0.35); g.lineTo(x1 - h * 1.6, cy - h); g.quadraticCurveTo(x1, cy - h, x1, cy); g.quadraticCurveTo(x1, cy + h, x1 - h * 1.6, cy + h); g.lineTo(x0, cy + h * 0.35); g.closePath(); g.fill();
+    g.fillStyle = bodyLo; g.fillRect(x0 + 1, cy + h * 0.35, x1 - x0 - h * 2, h * 0.55);
+    g.fillStyle = glass; g.beginPath(); g.moveTo(x1 - h * 1.5, cy - h * 0.6); g.quadraticCurveTo(x1 - h * 0.4, cy - h * 0.55, x1 - h * 0.35, cy); g.quadraticCurveTo(x1 - h * 0.4, cy + h * 0.55, x1 - h * 1.5, cy + h * 0.6); g.closePath(); g.fill();
+  };
+  const tailFin = (x, h, sp) => { poly(wing, x + 1, cy - 0.5, x - sp * 0.2, cy - sp, x - sp * 0.35, cy - sp, x - 0.5, cy - 0.5); poly(wingLo, x + 1, cy + 0.5, x - sp * 0.2, cy + sp, x - sp * 0.35, cy + sp, x - 0.5, cy + 0.5); g.fillStyle = polCol; g.fillRect(x - 3.5, cy - h * 0.45, 4.5, h * 0.9); };
   if (kind === 0) {
-    r(4, 8, 13, 4, wing); r(8, 1, 4, 18, wing); r(8, 1, 4, 1, '#fff');   // straight wing
-    r(3, 9, 15, 2, body); r(17, 9, 2, 2, '#3a3d42');
-    r(9, 4, 3, 2, eng); r(9, 14, 3, 2, eng); r(12, 3, 1, 4, 'rgba(40,40,40,.55)'); r(12, 13, 1, 4, 'rgba(40,40,40,.55)');
-    r(2, 6, 3, 8, wing); r(1, 9, 4, 2, polCol); r(6, 9, 9, 1, polCol);
-  } else if (kind === 1) {
-    poly(wing, 15, cy - 1, 9, 1, 7, 1, 10, cy - 1); poly(wing, 15, cy + 1, 9, S - 1, 7, S - 1, 10, cy + 1);   // swept wings
-    poly(wing, 5, cy - 1, 2, cy - 6, 1, cy - 6, 2, cy - 1); poly(wing, 5, cy + 1, 2, cy + 6, 1, cy + 6, 2, cy + 1);
-    r(2, cy - 1, 21, 3, body); r(23, cy - 1, 2, 3, '#dfe3e6'); r(24, cy, 1, 1, '#3a3d42');
-    r(11, cy - 6, 3, 2, eng); r(11, cy + 5, 3, 2, eng);
-    r(1, cy - 1, 4, 3, polCol); r(5, cy, 17, 1, polCol);
+    // a twin-engined propliner: straight wings, two engines with a blur of propeller, a long thin fuselage
+    poly(wing, 11.5, 0.8, 13.5, 0.8, 12.5, cy - 1, 9.5, cy - 1); poly(wingLo, 11.5, S - 0.8, 13.5, S - 0.8, 12.5, cy + 1, 9.5, cy + 1);
+    g.fillStyle = wing; g.fillRect(9.5, 0.8, 4, cy - 1.8); g.fillStyle = wingLo; g.fillRect(9.5, cy + 1, 4, cy - 1.8);
+    tailFin(4, 1.6, 4.5);
+    fuselage(1.5, 18.5, 1.5);
+    for (const sy of [cy - 5, cy + 5]) { g.fillStyle = eng; g.fillRect(11, sy - 0.9, 5, 1.8); g.fillStyle = 'rgba(60,60,64,.35)'; g.beginPath(); g.ellipse(16.4, sy, 0.6, 3, 0, 0, 6.283); g.fill(); }
+    g.fillStyle = polCol; g.fillRect(4, cy - 0.3, 11, 0.6);
   } else {
-    poly(wing, 20, cy - 2, 12, 1, 9, 1, 14, cy - 2); poly(wing, 20, cy + 2, 12, S - 1, 9, S - 1, 14, cy + 2);
-    poly(wing, 6, cy - 2, 2, cy - 8, 1, cy - 8, 3, cy - 2); poly(wing, 6, cy + 2, 2, cy + 8, 1, cy + 8, 3, cy + 2);
-    r(2, cy - 2, 28, 5, body); r(30, cy - 2, 2, 5, '#dfe3e6'); r(32, cy - 1, 1, 3, '#dfe3e6'); r(31, cy - 1, 1, 1, '#3a3d42');
-    r(15, cy - 8, 4, 2, eng); r(12, cy - 12, 4, 2, eng); r(15, cy + 7, 4, 2, eng); r(12, cy + 11, 4, 2, eng);
-    r(1, cy - 2, 5, 5, polCol); r(6, cy, 23, 1, polCol);
+    // jets: swept wings with engines slung under them, a swept tailplane, the realm's colours on the fin
+    const big = kind === 2, h = big ? 2.3 : 1.6, x1 = big ? 32.5 : 24.5, wx = big ? 19 : 14.5, sw = big ? 9 : 7, span = cy - 1;
+    poly(wing, wx + 1.5, cy - h + 0.3, wx - sw, 1, wx - sw - 2.5, 1, wx - 3, cy - h + 0.3); poly(wingLo, wx + 1.5, cy + h - 0.3, wx - sw, S - 1, wx - sw - 2.5, S - 1, wx - 3, cy + h - 0.3);
+    tailFin(big ? 6.5 : 5, h, big ? 8 : 6);
+    fuselage(1.5, x1, h);
+    const engs = big ? [[0.42, 1], [0.78, 0.8]] : [[0.5, 1]];
+    for (const [f, sz] of engs) for (const s of [-1, 1]) {
+      const ex = wx - sw * f + 1.2, ey = cy + s * (h + (span - h) * f);
+      g.fillStyle = eng; g.beginPath(); g.roundRect(ex - 2.2 * sz, ey - 0.8 * sz, 3.6 * sz, 1.6 * sz, 0.7); g.fill();
+      g.fillStyle = '#4a5056'; g.fillRect(ex + 1.1 * sz, ey - 0.6 * sz, 0.4, 1.2 * sz);
+    }
+    g.fillStyle = polCol; g.fillRect(4, cy - 0.25, x1 - h * 2.5 - 4, 0.5);
+    g.fillStyle = 'rgba(42,56,70,.55)'; for (let x = 5; x < x1 - h * 2.2; x += 1.6) { g.fillRect(x, cy - h * 0.72, 0.6, 0.35); }
   }
-  if (shadow) { g.globalCompositeOperation = 'source-in'; r(0, 0, S, S, '#000'); }
+  if (shadow) { g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-in'; g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height); }
+  c.k = 1 / X;
   artCache.set(key, c);
   return c;
 }

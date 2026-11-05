@@ -300,11 +300,12 @@ function digCanal(p, t) {
   for (let n = 0; n < (ditch ? 4 : 2); n++) {
     const i = J0.path[J0.built];
     if (i === undefined) break;
-    if (ditch ? t.stock[R.WOOD] < 0.5 : !canPay(t.stock, CANAL_TILE_COST) && t.stock[R.BRICK] < 3) return;
+    if (!J0.paid && (ditch ? t.stock[R.WOOD] < 0.5 : !canPay(t.stock, CANAL_TILE_COST) && t.stock[R.BRICK] < 3)) return;  // a great cut was paid for up front
     const need = (ditch ? 14 : J0.level === 2 ? 95 : 45) * (1 + W.elev[i] * 2);
     if (J0.prog < need) return;
     J0.prog -= need;
-    if (ditch) t.stock[R.WOOD] -= 0.5;
+    if (J0.paid) { /* the treasury's money buys the stone and timber */ }
+    else if (ditch) t.stock[R.WOOD] -= 0.5;
     else if (canPay(t.stock, CANAL_TILE_COST)) pay(t.stock, CANAL_TILE_COST); else t.stock[R.BRICK] -= 3;
     if (FXH && !ditch) FXH.rubble(i % W.w, (i / W.w) | 0, 1);
     digCanalTile(i, J0.level, J0);
@@ -319,12 +320,20 @@ function finishCanal(t) {
   if (!J0) return;
   if (!J0.level) { t.ditchN = (t.ditchN || 0) + 1; return; }  // a ditch: the fields beside it are wet now, nothing else changes
   if (J0.upgrade) { const c = W.canals.find(k => k.id === J0.id); if (c) c.level = 2; }
-  else W.canals.push({ id: J0.id, name: J0.name, owner: t.polity.id, town: t.id, level: J0.level, len: J0.path.length, path: J0.path, traffic: 0, built: Math.floor(year()) });
+  else {
+    // its number is its place in the list, given when it opens: two cuts begun the same year were once both given the same one,
+    // and the widening of one then found the other, for ever
+    const id = W.canals.length + 1;
+    for (const i of J0.path) if (W.canal[i]) W.canalId[i] = id;
+    W.canals.push({ id, name: J0.name, owner: t.polity.id, town: t.id, level: J0.level, len: J0.path.length, path: J0.path, traffic: 0, built: Math.floor(year()) });
+  }
   linkSeaNet();
   pathCache.clear(); shipCache.clear();
   t.portI = -1;
   for (const o of W.towns) o.portI = -1;
-  chronT('wonder', J0.upgrade ? `The ${J0.name} is widened. Ocean ships pass through ${t.name} now.` : `The ${J0.name} opens. Boats can reach where only carts could go.`, t);
+  if (J0.cut) { W.cutsDone = W.cutsDone || {}; W.cutsDone[J0.cut] = Math.floor(year()); }
+  chronT('wonder', J0.cut ? `The ${J0.name} opens. Ships pass from ${J0.from} to ${J0.to} without the long voyage round ${J0.round}.`
+    : J0.upgrade ? `The ${J0.name} is widened. Ocean ships pass through ${t.name} now.` : `The ${J0.name} opens. Boats can reach where only carts could go.`, t);
   scanTown(t);
   pathXP(t.polity, 'mar', 200);
 }
@@ -341,6 +350,7 @@ function fillMul(i) {
 }
 function fillSafe(i) {
   if ((W.water[i] !== 1 && W.water[i] !== 2) || W.ice[i] > 80) return false;
+  if (i % W.w === 0 || i % W.w === W.w - 1) return false;  // the date-line strait of a wrapping world
   const w = W.w, ring = [i - w - 1, i - w, i - w + 1, i + 1, i + w + 1, i + w, i + w - 1, i - 1];
   let wet = 0, joins = 0, land = 0;
   for (let k = 0; k < 8; k++) {
@@ -413,8 +423,69 @@ function fillTile(i) {
   if (onLandChange) onLandChange(i);
   dirty(i);
 }
+// ---- the great cuts of the Earth map ----
+// Where on the real Earth a short cut through a neck of land joins two seas and saves ships a voyage round a continent. Each end is a point on the water.
+const EARTH_CUTS = [
+  { name: 'Suez Canal', a: [32.3, 31.45], b: [32.6, 29.65], from: 'the Mediterranean', to: 'the Red Sea', round: 'Africa' },
+  { name: 'Panama Canal', a: [-79.9, 9.5], b: [-79.45, 8.75], from: 'the Caribbean', to: 'the Pacific', round: 'South America' },
+  { name: 'Kiel Canal', a: [8.85, 53.95], b: [10.2, 54.45], from: 'the North Sea', to: 'the Baltic', round: 'Jutland' },
+  { name: 'Corinth Canal', a: [22.85, 37.97], b: [23.1, 37.88], from: 'the Gulf of Corinth', to: 'the Aegean', round: 'the Peloponnese' },
+];
+const cutTile = ([lon, lat]) => Math.round(clamp(earthRow(lat, W.h), 1, W.h - 2)) * W.w + Math.round(clamp(earthCol(lon, W.w), 1, W.w - 2));
+// Once a year on the Earth map: is there a realm that holds (or can buy the use of) one of these necks, knows how to cut a ship canal, and can pay for it?
+function earthCutsYear() {
+  if (W.type !== 'earth') return;
+  const done = W.cutsDone || (W.cutsDone = {}), yr = Math.floor(year());
+  for (const C of EARTH_CUTS) {
+    if (done[C.name] || W.towns.some(t => t.canalJob && t.canalJob.cut === C.name)) continue;
+    const pa = waterNear(cutTile(C.a), 3), pb = waterNear(cutTile(C.b), 3);
+    if (pa < 0 || pb < 0) continue;
+    const w = W.w, gap = Math.hypot(wdx(pa % w, pb % w), ((pb / w) | 0) - ((pa / w) | 0));
+    let route = 600;
+    if (W.seaNet[pa] === W.seaNet[pb]) {
+      nodeBudget = Math.max(nodeBudget, 1);
+      const r = findShipPath(pa, pb, 9);  // as an ocean ship sails it: a river barges can use doesn't count
+      if (r === PATH_BUSY) continue;
+      if (r) route = r.length;
+    }
+    if (route < gap * 3 + 8) { done[C.name] = 'open'; continue; }  // there's already a way through
+    const saved = route - gap * 1.4;
+    if (saved < 12) { done[C.name] = 'not worth it'; continue; }  // at this map size the way round is short
+    // the neck's owner, and whoever has the engineers and the money
+    const mid = Math.round((((pa / w) | 0) + ((pb / w) | 0)) / 2) * w + Math.round(pa % w + wdx(pa % w, pb % w) / 2);
+    const ownT = W.townById[W.owner[mid]], owner = ownT ? ownT.polity : null;
+    let best = null, bs = 0;
+    for (const t of W.towns) {
+      if (!t.alive || t.nomad || t.occupier || t.canalJob || tn(t) < 60 || !t.tech[TECH_IX.shipcanal]) continue;
+      const pol = t.polity, cur = pol.cur;
+      if (cur.kind < 2 || (owner && owner !== pol && (atWar(owner, pol) || relOf(owner, pol) < -10))) continue;
+      const d = Math.hypot(wdx(t.x, mid % w), t.y - ((mid / w) | 0));
+      if (d > 60) continue;
+      const s = (pol === owner ? 3 : 1) * Math.sqrt(tn(t)) / (d + 10) * (1 + Math.max(0, cur.treasury) / 1e5);
+      if (s > bs) { bs = s; best = t; }
+    }
+    if (!best) continue;
+    const starts = [];
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) { const j = pa + dy * w + dx; if (j > w && j < W.seaNet.length - w && W.seaNet[j] === W.seaNet[pa]) starts.push(j); }
+    const bx = pb % w, by = (pb / w) | 0, near = j => W.seaNet[j] && Math.abs(j % w - bx) + Math.abs(((j / w) | 0) - by) <= 4;
+    const path = surveyCanal(starts, 0, -1, true, 40, near);
+    if (!path || path.length > 40) continue;
+    // a great public work: the treasury pays for it up front, by the length and the price of labour
+    const pol = best.polity, cur = pol.cur, cost = 1500 * Math.max(1, cur.level) * (path.length + 3);
+    if (cur.treasury < cost * 1.4) continue;
+    cur.treasury -= cost; cur.spentY += cost;
+    if (owner && owner !== pol) {  // the concession: the owner is paid for the land, and likes the bargain
+      const fee = cost * 0.25; cur.treasury -= fee; cur.spentY += fee; owner.cur.treasury += fee; owner.cur.incY = (owner.cur.incY || 0) + fee; adjustRel(owner, pol, 8);
+      chronT('gov', `${owner.name} grants ${pol.name} the right to cut a canal through its land between ${C.from} and ${C.to}.`, best);
+    }
+    startCanal(best, path, 2, `the ${C.name}, to join ${C.from} to ${C.to} and spare ships the voyage round ${C.round}`);
+    Object.assign(best.canalJob, { name: C.name, cut: C.name, paid: true, round: C.round, from: C.from, to: C.to });
+    done[C.name] = 0; W.cutsStart = W.cutsStart || {}; W.cutsStart[C.name] = yr;
+  }
+}
 // Tolls for the owner.
 function canalsYear() {
+  earthCutsYear();
   for (const c of W.canals) {
     const pol = W.polities[c.owner], town = W.townById[c.town];
     if (!pol || !pol.alive || !town || !town.alive) continue;

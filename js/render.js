@@ -402,29 +402,60 @@ function personPos(p, out) {
 }
 const _pos = { x: 0, y: 0 };
 const _vis = [];
+const FAR_BLD_COL = ['#77736a', '#a3a39c', '#c9805e', '#c7a56a', '#e0d4b8'];  // ruins, towers, brick, timber, everything else
 function drawFrame(dt) {
   const R0 = Render, ctx = R0.ctx, c = R0.cam, z = c.z, vw = R0.vw, vh = R0.vh;
   R0.time += dt;
   flushDirty();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#16345c'; ctx.fillRect(0, 0, vw, vh);
+  const vx0 = c.x, vy0 = c.y, vx1 = c.x + vw / z, vy1 = c.y + vh / z;
+  // zoomed far out a person is a dot a pixel or two across, and nobody can see them go round a house: the whole map walks the cheap way, as if off screen
+  if (z < FAR_Z) { VIEW.x0 = 0; VIEW.x1 = -1; VIEW.y0 = 0; VIEW.y1 = -1; }
+  else { VIEW.x0 = vx0 / TS - VIEW_MARGIN; VIEW.x1 = vx1 / TS + VIEW_MARGIN; VIEW.y0 = vy0 / TS - VIEW_MARGIN; VIEW.y1 = vy1 / TS + VIEW_MARGIN; }
+  // snow lies exactly as deep as it really is
+  if ((R0.frameN = (R0.frameN || 0) + 1) % 6 === 0) paintSnow(Math.max(8, Math.ceil(W.h / 8)));
+  if ((R0.mode === 'faith' || R0.mode === 'land') && W.tick % 120 === 0) paintMode();
+  if (!W.wrap) { drawWorld(dt); return; }
+  // a world that wraps round (the Earth) is drawn once for every copy of it the view takes in, side by side, so there's never an edge east or west
+  const pw = W.w * TS, x0 = c.x, labs = [], hits = [], vis0 = R0.visP || 0;
+  let seen = 0;
+  for (let k = Math.floor(x0 / pw); k * pw < x0 + vw / z; k++) {
+    c.x = x0 - k * pw; R0.visP = vis0;
+    drawWorld(dt);
+    seen += R0.visP || 0;
+    for (const L of R0.labels) labs.push(L);
+    if (R0.battleHits) for (const h of R0.battleHits) hits.push(h);
+  }
+  c.x = x0; R0.visP = seen;
+  R0.labels.length = 0; for (const L of labs) R0.labels.push(L);
+  if (R0.battleHits) { R0.battleHits.length = 0; for (const h of hits) R0.battleHits.push(h); }
+  // from far out, a hint of the globe: the far north and south fade towards the poles
+  if (z < 0.9) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const ph = W.h * TS, a = clamp((0.9 - z) * 0.5, 0, 0.3), band = ph * 0.14 * z;
+    for (const [y0, y1] of [[-c.y * z, -c.y * z + band], [(ph - c.y) * z, (ph - c.y) * z - band]]) {
+      const g = ctx.createLinearGradient(0, y0, 0, y1); g.addColorStop(0, `rgba(8,14,24,${a})`); g.addColorStop(1, 'rgba(8,14,24,0)');
+      ctx.fillStyle = g; ctx.fillRect(0, Math.min(y0, y1), vw, Math.abs(y1 - y0));
+    }
+  }
+}
+// One copy of the world, as the camera sees it now.
+function drawWorld(dt) {
+  const R0 = Render, ctx = R0.ctx, c = R0.cam, z = c.z, vw = R0.vw, vh = R0.vh;
   ctx.imageSmoothingEnabled = z < 1;
   const tx0 = Math.round(-c.x * z), ty0 = Math.round(-c.y * z);
   ctx.setTransform(z, 0, 0, z, tx0, ty0);
   const cs = CHUNK * TS;
   const vx0 = c.x, vy0 = c.y, vx1 = c.x + vw / z, vy1 = c.y + vh / z;
-  VIEW.x0 = vx0 / TS - VIEW_MARGIN; VIEW.x1 = vx1 / TS + VIEW_MARGIN; VIEW.y0 = vy0 / TS - VIEW_MARGIN; VIEW.y1 = vy1 / TS + VIEW_MARGIN;
   for (let cy = Math.max(0, Math.floor(vy0 / cs)); cy < R0.ch && cy * cs < vy1; cy++) {
     for (let cx = Math.max(0, Math.floor(vx0 / cs)); cx < R0.cw && cx * cs < vx1; cx++) {
       ctx.drawImage(R0.chunks[cy * R0.cw + cx], cx * cs, cy * cs, cs + 0.6 / z, cs + 0.6 / z);
     }
   }
-  // snow lies exactly as deep as it really is
-  if ((R0.frameN = (R0.frameN || 0) + 1) % 6 === 0) paintSnow(Math.max(8, Math.ceil(W.h / 8)));
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(R0.snow, 0, 0, W.w * TS, W.h * TS);
   const mode = R0.mode;
-  if ((mode === 'faith' || mode === 'land') && W.tick % 120 === 0) paintMode();
   if (mode === 'fertility' || mode === 'resources' || mode === 'faith' || mode === 'land') {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(R0.modeCv, 0, 0, W.w * TS, W.h * TS);
@@ -454,9 +485,12 @@ function drawFrame(dt) {
   const bx0 = vx0 / TS - marg, bx1 = vx1 / TS + marg, by0 = vy0 / TS - 2, by1 = vy1 / TS + marg;
   drawSurges(ctx, c, z, bx0, by0, bx1, by1);
   drawWalls(ctx, c, z, bx0, by0, bx1, by1);
-  for (let k = 0; k < bl.length; k++) { const b = bl[k]; if (b.x > bx0 && b.x < bx1 && b.y > by0 && b.y < by1) vis.push(b); }
+  // Buildings: auto (drawn close up, small squares far out), on (drawn at every zoom) or off (never)
+  const bmode = UI.blds;
+  if (bmode !== 'off') for (let k = 0; k < bl.length; k++) { const b = bl[k]; if (b.x > bx0 && b.x < bx1 && b.y > by0 && b.y < by1) vis.push(b); }
   const unit = z / 2;  // screen pixels per sprite pixel
-  if (z >= 0.5) {
+  if (bmode === 'off') { /* hidden */ }
+  else if (z >= 0.5 || bmode === 'on') {
     vis.sort((a, b) => (a.y + a.size) - (b.y + b.size));
     for (let k = 0; k < vis.length; k++) {
       const b = vis[k], sx = Math.round((b.x * TS - c.x) * z), sy = Math.round(((b.y + b.size) * TS - c.y) * z);
@@ -478,13 +512,17 @@ function drawFrame(dt) {
         if (def && def.smoke && z >= 1 && !b.ruin) drawSmoke(ctx, b, sx, sy - hs, unit, def.smoke);
       }
     }
-  } else if (UI.farBlds) {
-    const ts = Math.max(1, TS * z);
-    for (let k = 0; k < vis.length; k++) {
-      const b = vis[k], sx = (b.x * TS - c.x) * z, sy = (b.y * TS - c.y) * z;
-      ctx.fillStyle = b.ruin ? '#77736a' : b.type === 'house' ? (b.tier >= 6 ? '#a3a39c' : b.tier >= 2 ? '#c9805e' : '#c7a56a') : '#e0d4b8';
-      const s = ts * b.size;
-      ctx.fillRect(sx, sy, s + 0.5, s + 0.5);
+  } else {
+    const ts = Math.max(1, TS * z), FC = FAR_BLD_COL;
+    // one pass per colour, so the canvas changes colour five times rather than once per building
+    for (let q = 0; q < FC.length; q++) {
+      ctx.fillStyle = FC[q];
+      for (let k = 0; k < vis.length; k++) {
+        const b = vis[k];
+        if ((b.ruin ? 0 : b.type === 'house' ? (b.tier >= 6 ? 1 : b.tier >= 2 ? 2 : 3) : 4) !== q) continue;
+        const s = ts * b.size;
+        ctx.fillRect((b.x * TS - c.x) * z, (b.y * TS - c.y) * z, s + 0.5, s + 0.5);
+      }
     }
   }
   if (typeof drawParked === 'function') drawParked(ctx, c, z, vw, vh);  // parked cars, under the people (parkart.js)
@@ -584,31 +622,34 @@ const SKIN_SIZE = 1;
 function drawPeople(ctx, c, z, vw, vh) {
   const P = W.people, close = z >= 1.4, w = W.w, tick = W.tick;
   const t = Render.time;
-  // from far away a huge crowd is drawn as a sample: same look, far less work
+  // from far away a huge crowd is drawn as a sample: same look, far less work. The sample is chosen by who people are, not where they
+  // sit in the list, which shuffles with every birth and death: picked by place, a different crowd was drawn each frame and every dot flashed.
   const stride = !close && P.length > 12000 ? Math.ceil(P.length / 12000) : 1;
-  // the same goes for a packed square seen close up: past a couple of thousand on screen, nobody can tell
-  const thin = close && Render.visP > 1800 ? Math.ceil(Render.visP / 1800) : 1;
+  // the same goes for a packed square seen close up: past a couple of thousand on screen, nobody can tell.
+  // The level only moves when the crowd has really changed, or people blink as it flips between two levels.
+  const want = close && Render.visP > 1800 ? Math.ceil(Render.visP / 1800) : 1, th0 = Render.thin || 1;
+  const thin = Render.thin = !close ? 1 : want > th0 || Render.visP < 1800 * (th0 - 1) * 0.85 ? want : th0;
   let seen = 0;
   const u = z * 0.25;
   const x0 = c.x / TS - 2, x1 = (c.x + vw / z) / TS + 2, y0 = c.y / TS - 2, y1 = (c.y + vh / z) / TS + 2;
   const eraOf = p => p.town.polity.era || 0;
-  for (let k = 0; k < P.length; k += stride) {
+  for (let k = 0; k < P.length; k++) {
     const p = P[k];
-    if (p.hidden) continue;
+    if (p.hidden || (stride > 1 && p.id % stride !== 0)) continue;
     const ti = p.ti, tx1 = ti % w, ty1 = (ti / w) | 0;
     if (tx1 < x0 || tx1 > x1 || ty1 < y0 || ty1 > y1) continue;
     seen++;
-    if (thin > 1 && seen % thin !== 0 && !p.leader && UI.follow !== p && !p.btl) continue;
+    if (thin > 1 && p.id % thin !== 0 && !p.leader && UI.follow !== p && !p.btl) continue;
     personPos(p, _pos);
     let sx = (_pos.x - c.x) * z, sy = (_pos.y - c.y) * z;
     const onWater = W.water[ti] !== 0;
     const armed = p.btl || p.army;
     const col = p.sick > 0 ? '#9ccf4a' : armed || p.job === J.SOLDIER ? p.town.polity.color : JOB_COLOR[p.job];
     if (!close) {
-      if (onWater && z >= 0.6) { ctx.fillStyle = '#6b4a2a'; ctx.fillRect(sx - 2, sy, 4, 2); }
-      ctx.fillStyle = col;
-      const s = z < 0.7 ? 1 : 2;
-      ctx.fillRect(sx, sy, s, s);
+      // dots are gathered by colour and drawn together below: one colour change per colour instead of one per person
+      if (onWater && z >= 0.6) _dotBoat.push(sx, sy);
+      let D = _dots.get(col); if (!D) { D = []; _dots.set(col, D); }
+      D.push(sx, sy);
       continue;
     }
     if (onWater) { drawBoat(ctx, p, sx, sy, z); continue; }
@@ -664,8 +705,14 @@ function drawPeople(ctx, c, z, vw, vh) {
     if (p.flee && z >= 1.6) { ctx.fillStyle = '#f4f1de'; ctx.fillRect(sx + 3 * u, yy - 2 * u, 3 * u, 2 * u); ctx.fillStyle = '#2a2622'; ctx.fillRect(sx + 2.5 * u, yy - 2.5 * u, 0.7 * u, 5 * u); }
     if (p.unit && p.unit.cap === p && z >= 2) { ctx.fillStyle = '#ffd34d'; ctx.fillRect(sx - u, yy - 1.5 * u, 2 * u, 1.5 * u); }
   }
+  if (!close) {
+    if (_dotBoat.length) { ctx.fillStyle = '#6b4a2a'; for (let k = 0; k < _dotBoat.length; k += 2) ctx.fillRect(_dotBoat[k] - 2, _dotBoat[k + 1], 4, 2); _dotBoat.length = 0; }
+    const s = z < 0.7 ? 1 : 2;
+    for (const [col, D] of _dots) { if (!D.length) continue; ctx.fillStyle = col; for (let k = 0; k < D.length; k += 2) ctx.fillRect(D[k], D[k + 1], s, s); D.length = 0; }
+  }
   Render.visP = seen;
 }
+const _dots = new Map(), _dotBoat = [];
 const _pos2 = { x: 0, y: 0 };
 const _vehSlot = new Map();  // filled by drawVehicle while people are drawn, emptied by drawShips once they're done
 // Anyone travelling by more than their feet, in whatever their town has got to by now. Returns false for those on foot.
@@ -738,7 +785,7 @@ function drawBoat(ctx, p, x, y, z) {
 }
 function shipPos(s, out) {
   const w = W.w, a = s.at, b = s.state === 1 ? s.nx : a, f = s.state === 1 ? s.frac : 0;
-  let x = a % w + (b % w - a % w) * f + 0.5, y = ((a / w) | 0) + (((b / w) | 0) - ((a / w) | 0)) * f + 0.5;
+  let x = a % w + wdx(a % w, b % w) * f + 0.5, y = ((a / w) | 0) + (((b / w) | 0) - ((a / w) | 0)) * f + 0.5;  // over the date line, the short way
   // alongside: hard up against the quay
   if (s.state !== 1 && s.berth && s.berth.i === a) { x += s.berth.qx * 0.42; y += s.berth.qy * 0.42; }
   // warping in to a berth or out to a mooring: eased across from where it was
@@ -764,7 +811,7 @@ function drawShips(ctx, c, z, vw, vh) {
     if (sx < -100 || sy < -40 || sx > vw + 100 || sy > vh + 40) continue;
     if (z < 0.7) { const L0 = s.kind === 'war' ? 0 : (MERCHANTMEN[s.type].len || 0); ctx.fillStyle = s.kind === 'war' ? '#d63b3b' : '#f0e6c8'; ctx.fillRect(sx - 1 - (L0 ? 2 : 0), sy - 1, L0 ? 7 : 3, 2); continue; }
     // a ship keeps facing the way it last sailed; lying still it doesn't spin round
-    if (s.state === 1 && s.nx !== s.at) { const ax = s.at % W.w, bx = s.nx % W.w; if (bx !== ax) s.faceL = bx < ax ? 1 : 0; }
+    if (s.state === 1 && s.nx !== s.at) { const d = wdx(s.at % W.w, s.nx % W.w); if (d) s.faceL = d < 0 ? 1 : 0; }
     const left = !!s.faceL, moving = s.state === 1;
     const along = s.state === 2 || (s.state === 0 && s.berth && s.berth.i === s.at);
     // at anchor or on a mooring it rides the swell a little; alongside it sits still against the fenders
@@ -892,28 +939,13 @@ function drawFires(ctx, c, z) {
   }
 }
 function drawRails() {}
-function drawTrains(ctx, c, z) {
-  if (!W.rails) return;
-  const u = Math.max(1, z * 0.6);
-  for (const r of W.rails) {
-    if (!r.done) continue;
-    for (let car = 0; car < 4; car++) {
-      const pos = r.pos - r.dir * car * 1.1;
-      if (pos < 0 || pos > r.path.length - 1) continue;
-      const k = Math.floor(pos), f = pos - k, a = r.path[k], b = r.path[Math.min(k + 1, r.path.length - 1)];
-      const x = lerp(a % W.w, b % W.w, f), y = lerp((a / W.w) | 0, (b / W.w) | 0, f);
-      const sx = ((x + 0.5) * TS - c.x) * z, sy = ((y + 0.5) * TS - c.y) * z;
-      ctx.fillStyle = car === 0 ? '#1e1e22' : car === 1 ? '#3a3a40' : '#8a3b30';
-      ctx.fillRect(sx - 2 * u, sy - 1.5 * u, 4 * u, 3 * u);
-      if (car === 0 && z > 1) { ctx.fillStyle = 'rgba(180,180,180,.5)'; ctx.beginPath(); ctx.arc(sx, sy - 4 * u, 1.6 * u, 0, 6.283); ctx.fill(); }
-    }
-  }
-}
+// Locomotives, coaches and wagons, each following the track (railart.js).
+function drawTrains(ctx, c, z) { drawTrainSets(ctx, c, z); }
 // Airliners: a shadow on the ground that slides away as the plane climbs, the plane a little bigger the higher it is, and a plane
 // or two parked on the apron of any field that has seen traffic lately. From far away, only dots.
 const _pp = { x: 0, y: 0, a: 0, h: 0 };
 function drawOnePlane(ctx, kind, col, sx, sy, ang, h, z) {
-  const u = Math.max(z * 0.25, 0.35) * (1 + h / 110), sp = planeSprite(kind, col, false), sh = planeSprite(kind, col, true), w = sp.width * u;
+  const u = Math.max(z * 0.25, 0.35) * (1 + h / 110), sp = planeSprite(kind, col, false), sh = planeSprite(kind, col, true), w = sp.width * (sp.k || 1) * u;
   ctx.globalAlpha = 0.24 - Math.min(h, 30) * 0.004;
   ctx.save(); ctx.translate(sx + h * z * 0.3, sy + h * z * 0.08); ctx.rotate(ang); ctx.drawImage(sh, -w / 2, -w / 2, w, w); ctx.restore();
   ctx.globalAlpha = 1;
@@ -955,12 +987,29 @@ function drawHelis(ctx, c, z) {
     for (let k = 0; k < Math.min(n, 3); k++) {
       const drone = k >= (t.count.heliport || 0), a = now * (drone ? 0.9 : 0.45) + t.id * 1.7 + k * 2.1;
       const sx = sx0 + Math.cos(a) * (drone ? 5 : 8) * TS * z * 0.5, sy = sy0 + Math.sin(a) * (drone ? 3.5 : 5) * TS * z * 0.5, h = (drone ? 16 : 22) * z;
-      ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.fillRect(sx - 2 * u, sy, 4 * u, u);
+      // a soft shadow on the ground under it
+      ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.beginPath(); ctx.ellipse(sx + h * 0.25, sy, (drone ? 2.2 : 3.4) * u, (drone ? 1.2 : 1.5) * u, 0, 0, 6.283); ctx.fill();
       ctx.save(); ctx.translate(sx, sy - h); ctx.rotate(a + 1.571);
-      if (drone) { ctx.fillStyle = '#55595f'; ctx.fillRect(-2 * u, -0.4 * u, 4 * u, 0.8 * u); ctx.fillRect(-0.4 * u, -1.5 * u, 0.8 * u, 3 * u); }
-      else {
-        ctx.fillStyle = t.polity ? toHexRgb(t.polity.color) : '#3a3f46'; ctx.fillRect(-1.6 * u, -u, 3.2 * u, 2 * u); ctx.fillRect(1.4 * u, -0.3 * u, 3 * u, 0.6 * u);
-        ctx.strokeStyle = 'rgba(40,40,40,.6)'; ctx.lineWidth = Math.max(1, u * 0.3); const r = now * 30; ctx.beginPath(); ctx.moveTo(Math.cos(r) * 4 * u, Math.sin(r) * 4 * u); ctx.lineTo(-Math.cos(r) * 4 * u, -Math.sin(r) * 4 * u); ctx.stroke();
+      if (drone) {
+        // a quadcopter: an X of arms, a rotor blur at each tip, a little body with a camera
+        ctx.strokeStyle = '#3a3d42'; ctx.lineWidth = Math.max(0.8, 0.45 * u);
+        ctx.beginPath(); ctx.moveTo(-1.6 * u, -1.6 * u); ctx.lineTo(1.6 * u, 1.6 * u); ctx.moveTo(1.6 * u, -1.6 * u); ctx.lineTo(-1.6 * u, 1.6 * u); ctx.stroke();
+        ctx.fillStyle = 'rgba(200,210,220,.35)'; for (const [dx, dy] of [[-1.6, -1.6], [1.6, -1.6], [1.6, 1.6], [-1.6, 1.6]]) { ctx.beginPath(); ctx.arc(dx * u, dy * u, 1.1 * u, 0, 6.283); ctx.fill(); }
+        ctx.fillStyle = '#55595f'; ctx.fillRect(-0.8 * u, -0.8 * u, 1.6 * u, 1.6 * u); ctx.fillStyle = '#e04a3a'; ctx.fillRect(0.5 * u, -0.25 * u, 0.4 * u, 0.5 * u);
+      } else {
+        const col = t.polity ? toHexRgb(t.polity.color) : '#3a3f46';
+        // tail boom and tail rotor, then the cabin: rounded, shaded, a glass nose
+        ctx.fillStyle = shadeHex(col, -0.25); ctx.fillRect(1 * u, -0.28 * u, 4.2 * u, 0.56 * u);
+        ctx.fillStyle = 'rgba(60,60,64,.55)'; ctx.fillRect(4.9 * u, -1.1 * u, 0.35 * u, 2.2 * u);
+        ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(-0.4 * u, 0, 2.1 * u, 1.25 * u, 0, 0, 6.283); ctx.fill();
+        ctx.fillStyle = shadeHex(col, 0.3); ctx.beginPath(); ctx.ellipse(-0.6 * u, -0.45 * u, 1.4 * u, 0.45 * u, 0, 0, 6.283); ctx.fill();
+        ctx.fillStyle = '#2a3846'; ctx.beginPath(); ctx.ellipse(-1.8 * u, 0, 0.8 * u, 0.9 * u, 0, 0, 6.283); ctx.fill();
+        // the main rotor: a pale disc of blur with two blades turning in it
+        ctx.fillStyle = 'rgba(220,226,232,.18)'; ctx.beginPath(); ctx.arc(-0.2 * u, 0, 4.6 * u, 0, 6.283); ctx.fill();
+        ctx.strokeStyle = 'rgba(40,42,46,.55)'; ctx.lineWidth = Math.max(0.8, u * 0.3); const r = now * 30;
+        ctx.beginPath(); ctx.moveTo(-0.2 * u + Math.cos(r) * 4.4 * u, Math.sin(r) * 4.4 * u); ctx.lineTo(-0.2 * u - Math.cos(r) * 4.4 * u, -Math.sin(r) * 4.4 * u);
+        ctx.moveTo(-0.2 * u + Math.cos(r + 1.571) * 4.4 * u, Math.sin(r + 1.571) * 4.4 * u); ctx.lineTo(-0.2 * u - Math.cos(r + 1.571) * 4.4 * u, -Math.sin(r + 1.571) * 4.4 * u); ctx.stroke();
+        ctx.fillStyle = '#2a2c30'; ctx.beginPath(); ctx.arc(-0.2 * u, 0, 0.45 * u, 0, 6.283); ctx.fill();
       }
       ctx.restore();
     }
@@ -1167,7 +1216,7 @@ function drawLabels(ctx, c, z, vw, vh) {
 }
 function centerOn(wx, wy, z) {
   const c = Render.cam;
-  if (z) c.z = z;
+  if (z) { c.z = z; clampCam(); }  // the zoom it can really have first, or the centre is worked out for a zoom that's then changed
   c.x = wx * TS - Render.vw / 2 / c.z;
   c.y = wy * TS - Render.vh / 2 / c.z;
   clampCam();
@@ -1177,9 +1226,12 @@ function clampCam() {
   const mz = Math.min(Render.vw / pw, Render.vh / ph) * 0.9;
   if (c.z < mz) c.z = mz;
   if (c.z > 10) c.z = 10;
-  const vwW = Render.vw / c.z, vhW = Render.vh / c.z;
-  c.x = vwW >= pw ? (pw - vwW) / 2 : clamp(c.x, 0, pw - vwW);
-  c.y = vhW >= ph ? (ph - vhW) / 2 : clamp(c.y, 0, ph - vhW);
+  // the view may run a third of a screen past the edge, so realms on the rim aren't stuck under the panels
+  const vwW = Render.vw / c.z, vhW = Render.vh / c.z, mx = vwW * 0.35, my = vhW * 0.35;
+  // round the world east and west there's no edge at all: keep going and you come back to where you started
+  if (W.wrap) c.x = ((c.x % pw) + pw) % pw;
+  else c.x = clamp(c.x, Math.min(-mx, pw - vwW - mx), Math.max(mx, pw - vwW + mx));
+  c.y = clamp(c.y, Math.min(-my, ph - vhW - my), Math.max(my, ph - vhW + my));
 }
 function drawMinimap(cv) {
   const g = cv.getContext('2d'), s = cv.width / (W.w * TS), s0 = s;
@@ -1204,4 +1256,5 @@ function drawMinimap(cv) {
   const c = R0.cam;
   g.strokeStyle = '#ffe28a'; g.lineWidth = 1;
   g.strokeRect(c.x * s, c.y * s, R0.vw / c.z * s, R0.vh / c.z * s);
+  if (W.wrap) g.strokeRect((c.x - W.w * TS) * s, c.y * s, R0.vw / c.z * s, R0.vh / c.z * s);  // the part of the view that's come round the other side
 }

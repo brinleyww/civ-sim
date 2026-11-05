@@ -286,7 +286,7 @@ function enterHarbour(t, s, phase) {
 function lighter(t, s) {
   s.state = 3; s.berth = null;
   const m = moorTile(t, s); if (m >= 0) moveShipTo(s, m);
-  const D = shipDef(s), amt = s.hph === 'load' ? D.cap * 0.6 : s.load;
+  const D = shipDef(s), amt = (s.hph === 'load' ? D.hold * 0.6 : s.load) * D.cap / D.hold * 3;
   s.hDone = W.tick + Math.max(20, amt / (0.3 * (t.gang || 1)));
   s.lighter = true;
 }
@@ -309,7 +309,8 @@ function tryBerth(t) {
   }
 }
 function handleTime(t, s, x) {
-  const D = shipDef(s), amt = s.hph === 'load' ? Math.max(s.dest ? exportTo(t, s.dest, D) : 0, D.cap * 0.15) : Math.max(s.load, D.cap * 0.1);
+  // the work goes by the hull's size: a full hold takes about three times its size class in gang-ticks
+  const D = shipDef(s), held = s.hph === 'load' ? Math.max(s.dest ? exportTo(t, s.dest, D) : 0, D.hold * 0.15) : Math.max(s.load, D.hold * 0.1), amt = held * D.cap / D.hold * 3;
   return Math.round(clamp(amt / (x.rate * berthMul(x, D) * (t.gang || 1)), 10, 400) + 6);  // and the warping in and making fast
 }
 // Roughly how much one town could send another on this hull right now.
@@ -321,7 +322,7 @@ function exportTo(t, to, D) {
     const spare = t.stock[r] - wantOf(t, r) * 0.9, lack = wantOf(to, r) - to.stock[r];
     if (spare > 1 && lack > 1) v += Math.min(spare, lack);
   }
-  return Math.min(v, D.cap * t.mod.cargo);
+  return Math.min(v, holdOf(D, t));
 }
 // Slides the ship to a new tile; the renderer eases it across over a few ticks (warping in, casting off).
 function moveShipTo(s, j) {
@@ -362,7 +363,7 @@ function landCostPU(t) {
 // One load sent by sea: the crew's time and the fuel spread over the cargo, dues and pilots at each end,
 // handling on the quays, and getting the goods to and from the quay by land.
 function seaCostPU(t, D, len, load) {
-  const run = (D.men * 0.012 + (D.burn !== undefined ? D.cap * 0.0006 : 0)) / Math.max(D.spd, 0.2);
+  const run = (D.men * 0.012 + (D.burn !== undefined ? D.cap * 0.0006 : 0)) / Math.max(hullSpd(D), 0.2);
   const fixed = 6 + shipCls(D) * 10;
   const handle = 2.4 / Math.sqrt(portRate({ era: maxEraOf(t) }));
   return (fixed + run * len) / Math.max(load, 1) + handle + landCostPU(t) * 1.5;
@@ -461,7 +462,16 @@ function portRebuilt(b) {
 // ---- small boats: built, sold, carried to their new owners, kept, taken out and brought back ----
 const fishersOf = t => { let n = 0; for (const p of t.members) if (p.job === J.FISH) n++; return n; };
 // Where the town keeps its boats: a boathouse, else a jetty or quay for small craft.
+// Every fishing trip asks, so the answer is kept for a while (in a side table, so it never goes into a save).
+const _boatStoreAt = new WeakMap();
 function boatStore(t) {
+  const c = _boatStoreAt.get(t);
+  if (c && W.tick - c.at < 120 && W.tick >= c.at && (!c.b || W.bAt.get(c.b.i) === c.b)) return c.b;
+  const b = findBoatStore(t);
+  _boatStoreAt.set(t, { at: W.tick, b });
+  return b;
+}
+function findBoatStore(t) {
   let best = null;
   for (const b of t.blds) {
     if (!b.done) continue;

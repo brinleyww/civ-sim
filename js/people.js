@@ -124,11 +124,18 @@ function quietWalk(p, to) {
   const w = W.w, a = p.ti, ax = a % w, ay = (a / w) | 0, bx = to % w, by = (to / w) | 0;
   const dx = Math.abs(bx - ax), dy = Math.abs(by - ay), n = dx > dy ? dx : dy;
   if (n < 1) return false;
-  const sx = Math.sign(bx - ax), sy = Math.sign(by - ay), a1 = a + sx + sy * w, b1 = to - sx - sy * w;
-  const c0 = W.water[a1] ? 4 : stepNeed(p, a, a1), c1 = W.water[b1] ? 4 : stepNeed(p, b1, to);
-  const per = clamp((c0 + c1) / 2 / ((sx && sy) ? 1.414 : 1), 0.8, 40);
   // not straight across a bay or a lake: the way round is far longer, and anyone glancing over would see them walk on water
   for (let k = 1; k < n; k++) if (W.water[Math.round(ay + (by - ay) * k / n) * w + Math.round(ax + (bx - ax) * k / n)]) return false;
+  // the going rate, from ground sampled along the way; the doorways at either end don't count, or every walk home or to the store is timed as if through walls
+  let sum = 0, cnt = 0;
+  const S = Math.min(n, 7), at = k => Math.round(ay + (by - ay) * k / n) * w + Math.round(ax + (bx - ax) * k / n);
+  for (let q = 1; q <= S; q++) {
+    const k = Math.round(q * n / S), i = at(k), j = at(k - 1);  // one step of the line, j then i
+    if (W.occ[i] === 1 || W.occ[i] === 3 || W.occ[j] === 1 || W.occ[j] === 3) continue;
+    const d = i - j;
+    sum += stepNeed(p, j, i) / (d === 1 || d === -1 || d === w || d === -w ? 1 : 1.414); cnt++;
+  }
+  const per = clamp(cnt ? sum / cnt : 10, 0.8, 40);
   for (let k = 1; k < n; k++) {
     const i = Math.round(ay + (by - ay) * k / n) * w + Math.round(ax + (bx - ax) * k / n);
     if (!W.water[i] && W.occ[i] !== 1 && W.occ[i] !== 3) wearTile(i, p.town);
@@ -1458,8 +1465,8 @@ function personYear(p) {
     const few = tn(t) < 30 ? 1.25 : 1;
     const modern = m.infant < 0.5 ? 0.65 : 1;  // the demographic transition
     const educated = 1 - t.literacy * 0.35;     // and the more people read, the smaller the family
-    const nomadSpacing = t.nomad ? 0.62 : 1;
-    if (year() - p.lastBirth >= (t.nomad ? 3.5 : 2) && rnd() < 0.42 * crowd * room * food * modern * educated * nomadSpacing * few * p.fertM * t.crowdBirth * m.birth * (1 - t.polity.cur.slump * 0.3)) {
+    const nomadSpacing = t.nomad ? 0.8 : 1;  // a band on the move spaces its children about three years apart
+    if (year() - p.lastBirth >= (t.nomad ? 3 : 2) && rnd() < 0.42 * crowd * room * food * modern * educated * nomadSpacing * few * p.fertM * t.crowdBirth * m.birth * (1 - t.polity.cur.slump * 0.3)) {
       const c = newPerson(t, rnd() < 0.5 ? 0 : 1, 0, p, p.spouse);
       c.ti = c.nt = p.ti;
       c.home = p.home; if (p.home) p.home.res++;
@@ -1486,7 +1493,7 @@ function stepWorld() {
     for (let k = n0 - 1; k >= 0; k--) {
       const p = P[k];
       if (p.st === 1) {
-        if (vw && p.path.length === 2) { const i = glideTile(p), x = i % w, y = (i / w) | 0; if (x >= vx0 && x <= vx1 && y >= vy0 && y <= vy1) unquiet(p, i); }
+        if (vw && p.path.length === 2) { const i = glideTile(p); if (inView(i)) unquiet(p, i); }
         p.mv += p.spd; if (p.mv >= p.need) stepTile(p);
       }
       else { if (p.mv > 0) settle(p); if (tick >= p.wake) think(p); }
@@ -1496,7 +1503,7 @@ function stepWorld() {
     // (the renderer carries each walker on between visits, so the turns don't show as hops: see personPos)
     for (let k = n0 - 1; k >= 0; k--) {
       const p = P[k];
-      if (vw && p.st === 1 && p.path.length === 2) { const i = glideTile(p), x = i % w, y = (i / w) | 0; if (x >= vx0 && x <= vx1 && y >= vy0 && y <= vy1) unquiet(p, i); }
+      if (vw && p.st === 1 && p.path.length === 2) { const i = glideTile(p); if (inView(i)) unquiet(p, i); }  // inView knows the Earth map wraps
       if ((p.id + tick) % turn !== 0) continue;
       if (p.st === 1) { p.mv += p.spd * turn; while (p.st === 1 && p.mv >= p.need) stepTile(p); }  // every step they've earned since the last visit
       else { if (p.mv > 0) settle(p); if (tick >= p.wake) think(p); }

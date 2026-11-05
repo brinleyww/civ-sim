@@ -34,6 +34,7 @@
     <button id="bStats">Statistics</button>
     <button id="bHide" title="Hide or show every panel (H)">Hide panels</button>
     <button id="bSave">Save</button>
+    <button id="bFeedback" title="Tell the maker what you think">Feedback</button>
     <button id="bHelp">Help</button>
     <button id="bNew">New world</button>
   </div>
@@ -75,7 +76,7 @@
     <button data-m="normal" class="on">Terrain</button><button data-m="kingdoms">Realms</button><button data-m="resources">Resources</button><button data-m="fertility">Soil</button><button data-m="faith">Faith</button><button data-m="weather">Weather</button><button data-m="land" title="What the land is worth: dear in town centres and by the water, cheap out among the farms">Land value</button>
     <button id="bBorders" class="on" title="Show realm colours over the land (B)">Borders</button>
     <button id="bNames" title="Which names show on the map: towns and realms, realms only, or none (N)">Names: all</button>
-    <button id="bFar" class="on" title="Show buildings as small squares when zoomed far out">Far buildings</button>
+    <button id="bFar" title="Buildings: auto draws them close up and as small squares far out; on draws them at every zoom; off hides them">Buildings: auto</button>
   </div>
   <div id="tools" class="tbar">
     <div id="toolTabs" role="group" aria-label="Tool groups">
@@ -148,6 +149,7 @@
       </div>
     </div>
     <div class="actions">
+      <button id="oFeedback" class="ghost">Feedback</button>
       <button id="oBack" class="ghost" hidden>Back to this world</button>
       <button id="oLoad" class="ghost" hidden>Continue saved world</button>
       <button id="oGo" class="primary">Begin</button>
@@ -160,6 +162,24 @@
   <div id="techInfo"></div><div id="techTree"></div></div></div>
 <div id="statsModal" class="modal" hidden><div class="card wide viz"><button class="close" data-close>×</button><h2>Statistics</h2><div id="statsBody"></div></div></div>
 <div id="econModal" class="modal" hidden><div class="card wide"><button class="close" data-close>×</button><h2>The world’s money</h2><div id="econBody"></div></div></div>
+<div id="fbModal" class="modal" hidden><div class="card"><button class="close" data-close>×</button><h2>Feedback</h2>
+  <div id="fbSendBox" class="form">
+    <p class="sub">Found a bug, want something added, or think something is unrealistic? Only the game’s maker can read what you send. If the game crashes, a crash report goes the same way on its own.</p>
+    <label>What is it about? <select id="fbKind"></select></label>
+    <label>Your feedback <textarea id="fbText" rows="7" maxlength="4000" placeholder="What happened, or what you’d like to see…"></textarea></label>
+    <label>Your name <small>(optional)</small> <input id="fbName" type="text" maxlength="60"></label>
+    <label>How to reply to you <small>(optional)</small> <input id="fbContact" type="text" maxlength="120"></label>
+    <input id="fbHp" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" class="fbHp">
+    <label class="fbCheck"><input id="fbMeta" type="checkbox" checked> Include this world’s year, size and seed</label>
+    <div class="actions"><button id="fbOwner" class="ghost" title="For the game’s maker">Owner</button><span id="fbMsg" class="fbMsg" role="status"></span><button id="fbSend" class="primary">Send</button></div>
+  </div>
+  <div id="fbOwnerBox" hidden>
+    <div class="form fbKeyRow"><input id="fbKey" type="password" placeholder="Owner key" autocomplete="off"><button id="fbLoad">Show feedback</button><button id="fbForget" class="ghost">Forget key</button><button id="fbBack" class="ghost">Back</button></div>
+    <div id="fbOwnerMsg" class="fbMsg" role="status"></div>
+    <div id="fbList"></div>
+    <button id="fbMore" hidden>Load more</button>
+  </div>
+</div></div>
 <div id="helpModal" class="modal" hidden><div class="card"><button class="close" data-close>×</button><h2>How it works</h2><div id="helpBody"></div></div></div>
 
 <script src="js/core.js"></script>
@@ -195,10 +215,13 @@
 <script src="js/portart.js"></script>
 <script src="js/officeart.js"></script>
 <script src="js/vehicleart.js"></script>
+<script src="js/railart.js"></script>
+<script src="js/junctions.js"></script>
 <script src="js/parkart.js"></script>
 <script src="js/render.js"></script>
 <script src="js/warfx.js"></script>
 <script src="js/ui.js"></script>
+<script src="js/feedback.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>
