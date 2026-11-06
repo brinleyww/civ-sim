@@ -447,6 +447,7 @@ function openRoad(R0) {
 // ---- yearly ----
 function roadsYear() {
   const N = roadNet();
+  if (typeof bridgesYear === 'function') bridgesYear();  // the crossings: found, kept up, mended, replaced (bridges.js)
   // construction goes on
   for (const R0 of N.roads) {
     if (R0.done) continue;
@@ -634,7 +635,9 @@ function subPath(R0, s, e) {
 function drawRoadNet(ctx, z) {
   const N = W.roadNet;
   const c = Render.cam, x0 = c.x / TS, y0 = c.y / TS, x1 = x0 + Render.vw / z / TS, y1 = y0 + Render.vh / z / TS;
-  // the junctions of the worn-in streets, on the tile grid (junctions.js)
+  // the bridges of the streets and railways, by kind (bridgeart.js), then the junctions of the worn-in streets (junctions.js)
+  const BA = typeof drawBridges === 'function';
+  if (BA) drawBridges(ctx, z, x0, y0, x1, y1, 'tile');
   if (typeof drawStreetJunctions === 'function') drawStreetJunctions(ctx, z, x0, y0, x1, y1);
   if (!N || !N.roads.length) return;
   if (roadPathV !== N.v) { roadPathCache.clear(); roadPathV = N.v; }
@@ -654,8 +657,9 @@ function drawRoadNet(ctx, z) {
     if (!far) { ctx.setLineDash([TS * 0.3, TS * 0.9]); ctx.strokeStyle = '#e8743a'; ctx.globalAlpha = 1; ctx.lineWidth = Math.max(0.6, T.wid * TS * 0.12); ctx.stroke(p); ctx.setLineDash([]); }
   }
   ctx.globalAlpha = 1;
-  // bridges: a shadow on the water and parapets
-  for (const R0 of vis) {
+  // bridges: piers, arches and parapets by kind (bridgeart.js); without it, a shadow on the water and a plain band
+  if (BA) drawBridges(ctx, z, x0, y0, x1, y1, 'rd0');
+  else for (const R0 of vis) {
     if (!R0.done || !R0.br.length) continue;
     const T = RT[R0.type];
     for (let k = 0; k < R0.br.length; k += 2) {
@@ -686,6 +690,7 @@ function drawRoadNet(ctx, z) {
   }
   if (!far) for (const R0 of vis) { if (R0.done) drawMarkings(ctx, R0, z); }
   if (JX) { drawJunctionTops(ctx, z, x0, y0, x1, y1); drawJunctionMarks(ctx, z, x0, y0, x1, y1); }
+  if (BA) drawBridges(ctx, z, x0, y0, x1, y1, 'rd1');  // towers, cables and trusses over the road deck
   ctx.restore();
 }
 function drawMarkings(ctx, R0, z) {

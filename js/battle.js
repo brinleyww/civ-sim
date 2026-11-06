@@ -227,6 +227,7 @@ function startBattle(a, b, town, opts) {
   // an ambush or a night attack takes the other side as it finds them
   if (B.sA.plan === 'ambush' || B.sA.plan === 'night') B.sB.plan = B.sB.plan === 'hill' || B.sB.plan === 'ford' || B.sB.plan === 'depth' ? B.sB.plan : 'mob';
   applyPlan(B.sA, B); applyPlan(B.sB, B);
+  climSide(B.sA, B); climSide(B.sB, B);  // the country, and who is at home in it (climate.js)
   startTactic(B.sA, B.sB, B); startTactic(B.sB, B.sA, B);
   if (town) B.siegePlan = pickSiege(B);
   B.sA.air = hasAir(B.sA); B.sB.air = hasAir(B.sB);
@@ -384,6 +385,7 @@ function hasAir(S) {
 function joinBattle(B, army, S) {
   if (B.over || army.battle) return;
   addArmy(S, army, B);
+  climSide(S, B);
   for (const u of army.units) { u.x = army.x; u.y = army.y; u.tx = army.x; u.ty = army.y; const d = Math.max(0.5, Math.hypot(B.x - army.x, B.y - army.y)); u.ux = (B.x - army.x) / d; u.uy = (B.y - army.y) / d; }
   army.guns.forEach(g => { g.x = army.x; g.y = army.y; g.cool = W.tick + 40; });
   const E = S === B.sA ? B.sB : B.sA;
@@ -577,6 +579,7 @@ function strike(att, def, B, S, E, w, d2) {
   const skill = 1 + Math.min(att.xp || 0, 40) * 0.012;
   let hit = ranged ? 0.42 * att.aimM * (1 - Math.sqrt(d2) / (w.rng * 2.2)) : 0.62;
   hit *= skill * (att.stam < 25 ? 0.82 : 1) * (att.wound === 2 ? 0.75 : 1) * (u ? (0.85 + u.coh * 0.2) : 1) / clamp(1 + Math.min(def.xp || 0, 40) * 0.006, 1, 1.25);
+  hit *= (S.cf || 1) * (att.mount === 1 ? S.cfH || 1 : 1);  // climate.js: strangers to this country fight it worse
   if (ranged) {
     if (W.tree[def.ti] > 2) hit *= 0.72;
     if (B.wx === WX.RAIN) hit *= 0.85; else if (B.wx === WX.FOG) hit *= 0.6; else if (B.wx === WX.SNOW) hit *= 0.85;

@@ -275,3 +275,22 @@ kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 3
 .nw1500 .clock { width: 300px; } .nw1500 .speed button { padding: 3px 5px; } .nw1500 .menu button { padding: 3px 7px; }
 .nw1320 .stats span { display: none; } .nw1320 .stats { gap: 10px; } .nw1320 #top { gap: 8px; } .nw1320 #rate { display: none; } .nw1320 .clock { width: 250px; } .nw1320 #season { display: none; }
 .nw980 .stats { display: none; } .nw980 .startGrid { grid-template-columns: 1fr; }
+/* the person editor, under the person's panel */
+#rightEdit { border-top: 1px solid var(--line); padding: 4px 12px 8px; flex: 0 1 auto; max-height: calc((100vh / var(--ui) - 264px) * 0.6); overflow: auto; }
+#rightEdit:not([open]) { flex-shrink: 0; }
+#rightEdit summary { cursor: pointer; color: var(--gold); font: 600 12px var(--sans); padding: 3px 0; }
+#right.mini #rightEdit { display: none; }
+.ed h5 { margin: 8px 0 3px; font: 600 11px var(--sans); color: var(--ink3); text-transform: uppercase; letter-spacing: .04em; }
+.ed .trait a { cursor: pointer; margin-left: 4px; opacity: .75; }
+.ed .trait a:hover { opacity: 1; }
+.ed .tags { display: flex; flex-wrap: wrap; gap: 3px; }
+.edrow { display: flex; gap: 4px; margin-top: 5px; }
+.edrow select { flex: 1; }
+.edgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+.edgrid.wide { grid-template-columns: 1fr; margin-bottom: 4px; }
+.edgrid label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--ink3); min-width: 0; }
+.edgrid label.ov { color: var(--gold); }
+.edgrid label.chk { flex-direction: row; align-items: center; gap: 5px; font-size: 12px; color: var(--ink); }
+.ed select, .ed input[type=number] { background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px; font: inherit; font-size: 12px; min-width: 0; width: 100%; box-sizing: border-box; }
+.ed > button { margin-top: 6px; }
+.ed .sub { margin-top: 6px; font-size: 11px; }

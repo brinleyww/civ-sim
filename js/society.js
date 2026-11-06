@@ -87,6 +87,7 @@ function recomputeMods(t) {
   for (let q = 0, K = C.known; q < K.length; q++) if (!t.tech[K[q]]) { techDirty(t); C = techCache(t); break; }
   const X = C.fx; for (const k in X) m[k] = X[k];
   if (typeof discoveryFx === 'function') discoveryFx(t, m);  // js/discovery.js: inputs to hand, golden and dark ages
+  if (t.boon && typeof powerFx === 'function') powerFx(t, m);  // js/traits.js: the observer's blessings and curses
   // what the realm has become, then what this town has actually built
   if (t.polity && t.polity.fx) applyFx(m, t.polity.fx);
   if (t.polity && t.polity.geoFx) applyFx(m, t.polity.geoFx);
@@ -851,7 +852,7 @@ const NEED_WHY = { farm: 'Hunger drove them to it.', nature: 'Hunger drove them 
 function discover(t, T) {
   const adults = t.members.filter(p => ageOf(p) >= 14 && !p.army);
   // whoever comes up with it is usually someone with a head for that sort of thing, doing that sort of work
-  let who = null, bs = -1;
+  let who = t._who || null, bs = who ? 1e9 : -1;  // a genius the observer made takes the credit (traits.js geniusYear)
   for (let k = 0; k < 40 && adults.length; k++) {
     const p = adults[rint(adults.length)];
     let s = rnd() + (p.job === T.dom ? 2 : p.job === T.alt ? 1 : 0) + (p.wisM - 1) * 2;
@@ -860,6 +861,8 @@ function discover(t, T) {
   }
   const first = !W.firsts[T.id], pol = t.polity, realmFirst = !pol.firsts[T.id];
   const why = t.needs[T.tagI] > 1.2 ? NEED_WHY[T.tag] : null;
+  // the ten thousand small improvements (g_ ids) would drown the chronicle: one in eight world firsts is told, none of the rest
+  const minor = T.id.charCodeAt(0) === 103 && T.id.charCodeAt(1) === 95, tell = !minor || T.ix % 8 === 0;
   if (first) {
     W.firsts[T.id] = { year: Math.floor(year()), town: t.name, who: who ? who.name : 'unknown', polity: pol.name, pid: pol.id, x: t.x, y: t.y };
     W.eraNow = eraOfKnown(X => X.start || W.firsts[X.id]);
@@ -867,11 +870,11 @@ function discover(t, T) {
     if (T.id === 'agriculture') {
       const c = t.near.wildBest || 1;
       chronT('tech', `${who ? who.name + ' of ' : 'People at '}${t.name} sow the first deliberate field of ${CROPS[c].name}. Agriculture is born.`, t);
-    } else {
+    } else if (tell) {
       const jw = who && who.job > J.ELDER ? JOB_NAME[who.job].toLowerCase() : '';
       chronT('tech', `${who ? who.name + (jw ? `, ${/^[aeiou]/.test(jw) ? 'an' : 'a'} ${jw} of ${t.name},` : ' of ' + t.name) : 'People at ' + t.name} ${pick(['invents', 'devises', 'discovers', 'works out'])}: ${T.name}.${why ? ' ' + why : ''}`, t);
     }
-  } else if (realmFirst && tn(t) > 20) {
+  } else if (realmFirst && !minor && tn(t) > 20) {
     // independent discovery: the same idea turning up far apart within a few years
     const f = W.firsts[T.id], yrs = f ? Math.floor(year()) - f.year : 99;
     chronT('spread', f && !T.side && f.pid !== pol.id && yrs <= 10 ? `${t.name} works out ${T.name} on its own, ${yrs ? yrs + (yrs === 1 ? ' year after ' : ' years after ') : 'in the same year as '}${f.town} in ${f.polity}.` : `${t.name} works out ${T.name} for itself${why ? '. ' + why : '.'}`, t);
@@ -1150,7 +1153,7 @@ function findSite(t, minR, maxR, nomad) {
     if (W.water[i] || W.river[i] || W.occ[i] || W.road[i] >= 2) continue;
     const b = W.biome[i];
     if (b === B.ROCK || b === B.SNOW || slopeAt(i) > 0.14) continue;
-    if (W.landId[i] !== W.landId[t.i] && t.portLv < 1) continue;
+    if (W.landId[i] !== W.landId[t.i] && t.portLv < 1 && !iceJoined(W.landId[i], W.landId[t.i])) continue;  // over the sea only by ship, or a strait frozen hard
     // villages can sit close together; nobody builds in a city's shadow
     let bad = false;
     for (const o of others) {
@@ -1206,19 +1209,30 @@ function founders(t, count) {
 // Why families leave home: too many in town, too little to eat, or every field within a day's walk already taken. Most of all the last.
 function colonyPush(t) {
   const n = tn(t);
-  if (t.nomad) return n > 42 ? 0.5 : 0;
-  const limit = Math.max(70 + Math.min(t.fields.length, 200) * 1.2 + (knows(t, 'writing') ? 60 : 0) + (knows(t, 'engineering') ? 80 : 0) + (knows(t, 'printing') ? 150 : 0) + (knows(t, 'factory') ? 400 : 0), (100 + t.mod.urban) * 0.55);
+  // a band holds together unless something forces it apart: too many mouths for the country it walks, hunger, a feud, or simply far too many to lead
+  if (t.nomad) {
+    if (n <= 44) return 0;
+    let food = 0; for (const i of t.sForage) food += W.forage[i];
+    let herd = 0; for (const H of t.herds) herd += H.n * 2;
+    const per = (food + herd + t.sFish.length * 0.6) / n, feud = t.unrest > 35;
+    const push = (per < 2.6 ? 0.1 + Math.min(0.12, (2.6 - per) * 0.06) : 0) + (t.starvedY > 0 || t.famine > 0 ? 0.12 : 0) + (feud ? 0.1 : 0) + (n > 70 ? 0.06 + Math.min(0.2, (n - 70) * 0.006) : 0);
+    t.pushWhy = feud ? 'feud' : '';
+    return push * t.mod.colony;
+  }
+  // before writing, a village is a few big families: it grows a long way before any of them strikes out alone
+  const early = !knows(t, 'writing');
+  const limit = Math.max(70 + Math.min(t.fields.length, 200) * 1.2 + (early ? 0 : 60) + (knows(t, 'engineering') ? 80 : 0) + (knows(t, 'printing') ? 150 : 0) + (knows(t, 'factory') ? 400 : 0), (100 + t.mod.urban) * 0.55) * (early ? 1.2 : 1);
   let push = 0, why = '';
   if (n > limit) { push += (t.crowd > 1 ? 0.25 : 0.09) + Math.min(0.3, (n / limit - 1) * 0.5); why = 'crowd'; }
   const starved = t.starvedY / Math.max(t.members.length, 1);
   if (n > 30 && (starved > 0.004 || t.famine > 0)) { push += Math.min(0.55, 0.15 + starved * 25); why = 'hunger'; }
   // land hunger: once the farmland round a town is all taken, the young have to go and find their own
-  if (n > 45 && t.crop && !t.mod.rail) {
+  if (n > (early ? 60 : 45) && t.crop && !t.mod.rail) {
     const room = t.sArable.length + t.fields.length, need = t.jobs[J.FARM] * t.scale * (4.5 + t.mod.fields);
     if (room < need * 1.15) { push += Math.min(0.45, (1.15 - room / Math.max(need, 1)) * 0.6); why = 'land'; }
   }
   // and younger children inherit nothing: a steady trickle of new villages from any healthy place
-  if (n > 70 && !knows(t, 'factory')) push += 0.035;
+  if (n > (early ? 110 : 70) && !knows(t, 'factory')) push += early ? 0.02 : 0.035;
   // and a port with ocean-going hulls sends people to see what's on the other side
   if (n > 100 && t.mod.sail >= 2 && t.portLv >= 1 && t.ships.length) { push += 0.06; if (!why) why = 'sea'; }
   t.pushWhy = why;
@@ -1227,6 +1241,9 @@ function colonyPush(t) {
 function tryColonize(t) {
   const n = tn(t), yr = year();
   if (t.moved > yr - 5 || t.occupier || t.attack) return;
+  // a people that has just sent off a daughter band or village waits a generation, or most of one, before the next (sinceColony: the year it last did)
+  const early = t.nomad || !knows(t, 'writing');
+  if (t.sinceColony && yr - t.sinceColony < (t.nomad ? 22 : early ? 14 : 4)) return;
   if (rnd() > colonyPush(t)) return;
   const hungry = t.pushWhy === 'hunger' || t.pushWhy === 'land';
   if (worldPop() > W.maxPop * 0.97) return;
@@ -1239,7 +1256,7 @@ function tryColonize(t) {
   // a realm with ships that cross oceans looks beyond the horizon: empty coasts on other shores
   if ((site < 0 || t.pushWhy === 'sea' || rnd() < 0.25) && !t.nomad && t.mod.sail >= 2 && t.portLv >= 1) { const o = overseasSite(t); if (o >= 0) site = o; }
   if (site < 0) { if (hungry) t.noSiteY = Math.floor(yr); return; }  // nowhere left to go: the realm feels it (war.js landHunger)
-  const overseas = W.landId[site] !== W.landId[t.i];
+  const overseas = W.landId[site] !== W.landId[t.i] && !iceJoined(W.landId[site], W.landId[t.i]);
   nodeBudget = Math.max(nodeBudget, 1);
   let carrier = null, landing = null;
   if (overseas) {
@@ -1254,7 +1271,7 @@ function tryColonize(t) {
     if (!route || route === PATH_BUSY) return;
   } else {
     const test = findPath(t.i, site, 0);
-    if (!test || test === PATH_BUSY) return;
+    if (!test || test === PATH_BUSY || !iceSafe(test)) return;
   }
   let group = founders(t, Math.round(clamp(n * 0.28, 8, 36)));
   if (carrier) group = group.slice(0, shipDef(carrier).men);
@@ -1265,14 +1282,15 @@ function tryColonize(t) {
   const reach = 24 + govSt(pol) * 7 + cap0.mod.admin * 0.45 + (knows(cap0, 'writing') ? 14 : 0) + (cap0.mod.speed - 1) * 60 + (cap0.trans || 0) * 4;
   const dc = Math.hypot(tx(site) - cap0.x, ty(site) - cap0.y);
   const away = clamp((dc - reach) / Math.max(reach, 1), 0, 1.5);
-  let leave = t.nomad ? (tdist(t.i, site) > 26 ? 0.5 : 0) : away * 0.45 + (overseas ? (t.portLv >= 2 && t.navy ? 0.12 : 0.4) : 0);
+  let leave = t.nomad ? (tdist(t.i, site) > 26 ? 0.35 : 0) : away * 0.45 + (overseas ? (t.portLv >= 2 && t.navy ? 0.12 : 0.4) : 0);
   if (pol.stab < 35) leave += 0.1;
+  if (early && !t.nomad) leave *= 0.7;  // kin villages mostly stay with their people
   let newPol = pol, culture = t.culture;
   if (rnd() < leave) {
     if (rnd() < 0.4) culture = makeCulture(t.culture);
     newPol = (t.nomad || rnd() < 0.6) ? newPolity(culture) : pol;
   }
-  if (newPol !== pol) { newPol.crops = pol.crops.slice(); adjustRel(pol, newPol, 15); newPol.known[pol.id] = 1; pol.known[newPol.id] = 1; newPol.gov = t.nomad ? 0 : GOV_IX.tribe; }
+  if (newPol !== pol) { newPol.crops = pol.crops.slice(); adjustRel(pol, newPol, early ? 45 : 15); newPol.known[pol.id] = 1; pol.known[newPol.id] = 1; newPol.gov = t.nomad ? 0 : GOV_IX.tribe; }
   const nt = newTown(newPol, culture, site, t.nomad);
   nt.tech.set(t.tech); nt.prog.set(t.prog); techDirty(nt); recomputeMods(nt); nt.crop = t.crop;
   if (!nt.crop && knows(nt, 'agriculture')) settleCrop(nt);
@@ -1289,7 +1307,7 @@ function tryColonize(t) {
   if (t.folk > 0 && t.scale > 1.05) { const extra = Math.min(t.folk, Math.round(group.length * (t.scale - 1))); t.folk -= extra; nt.folk += extra; nt.scale = tn(nt) / Math.max(1, nt.members.length); t.scale = tn(t) / Math.max(1, t.members.length); }
   if (t.tameHerd && t.tameHerd.n > 6 && !overseas) { const k = Math.floor(t.tameHerd.n / 3); t.tameHerd.n -= k; nt.tameHerd = { id: W.nextId++, x: t.x, y: t.y, type: t.tameHerd.type, n: k, tx: nt.x, ty: nt.y, owner: nt }; W.herds.push(nt.tameHerd); }
   planJobs(t); planJobs(nt);
-  t.moved = yr; nt.moved = yr;
+  t.moved = yr; nt.moved = yr; t.sinceColony = yr; nt.sinceColony = yr;
   pathXP(pol, 'fro', 120);
   const kind = t.pushWhy === 'hunger' ? 'Hungry families' : t.pushWhy === 'land' ? 'Families with no land to farm' : t.nomad ? 'Part of the band' : 'Settlers';
   if (!t.nomad || overseas) chronT('found', `${kind} from ${t.name} ${overseas ? `board the ${carrier.name} to cross the water and found` : 'set out and found'} ${nt.name}.`, nt);
@@ -1314,7 +1332,7 @@ function tryRelocate(t) {
   if (site < 0) return;
   nodeBudget = Math.max(nodeBudget, 1);
   const test = findPath(t.i, site, 0);
-  if (!test || test === PATH_BUSY) return;
+  if (!test || test === PATH_BUSY || !iceSafe(test)) return;
   for (const b of t.blds.slice()) removeBuilding(b);
   releasePlots(t);
   t.i = site; t.x = tx(site); t.y = ty(site); t.moved = yr; t.cap = 0;
@@ -1510,6 +1528,7 @@ function townYear(t) {
   labourYear(t); officeYear(t); redevelopYear(t); econTown(t);
   if (t.ageN >= 5) { t.lifeExp = t.lifeExp * 0.8 + (t.ageSum / t.ageN) * 0.2; t.ageSum = 0; t.ageN = 0; }
   folkYear(t);
+  if (t.boon || W.genii) powersYear(t);  // js/traits.js: blessings, curses, the observer's geniuses
   t.deathsY = t.birthsY = t.starvedY = 0;
 }
 function tierCheck(t) {

@@ -51,6 +51,7 @@ function forge(t, power) {
 }
 // Who gets what: sharp eyes get a missile weapon, the strong a blade, and everyone else takes what's in the rack.
 function issueGear(p, t) {
+  if (p.gearLock) { p.hp = maxHP(p); p.cdT = 0; p.stam = 100; p.wound = 0; p.bleed = 0; p.flee = false; p.down = false; p.foe = null; p.mor = musterMor(p, t); return; }  // hand-picked kit (the person editor): keep it
   const roleWanted = p.aimM > 1.15 ? 'ranged' : p.str > 1.2 ? 'melee' : null;
   let w = 0;
   if (roleWanted) for (let k = WEAPONS.length - 1; k >= 1; k--) if (t.arsenal[k] >= 1 && WEAPONS[k].role === roleWanted) { w = k; break; }
@@ -85,8 +86,9 @@ function issueGear(p, t) {
   p.shield = G.role === 'melee' && !!t.tech[TECH_IX.bronzearmor] && !t.tech[TECH_IX.rifle];
   p.hp = maxHP(p);
   p.cdT = 0; p.stam = 100; p.wound = 0; p.bleed = 0; p.flee = false; p.down = false; p.foe = null;
-  p.mor = clamp(42 + (t.mod.morale || 0) * 0.45 + (p.moraleM - 1) * 30 + Math.min(p.xp, 30) * 0.5 + rnd() * 12 + (t.count.drillyard ? 5 : 0) + (t.count.warcollege ? 4 : 0), 15, 95);
+  p.mor = musterMor(p, t);
 }
+const musterMor = (p, t) => clamp(42 + (t.mod.morale || 0) * 0.45 + (p.moraleM - 1) * 30 + Math.min(p.xp, 30) * 0.5 + rnd() * 12 + (t.count.drillyard ? 5 : 0) + (t.count.warcollege ? 4 : 0), 15, 95);
 // A soldier in a big realm's army stands for a company (army.rep men), so it takes and deals that much more: the square root each way,
 // so its weight in a fight goes with the number of men it stands for.
 const maxHP = p => p.hpMax * (p.mount === 2 ? 6 : p.mount === 1 ? 1.25 : 1) * (p.army && p.army.hpK ? p.army.hpK : 1);
@@ -164,6 +166,7 @@ const callable = (p, e) => { const v = ageOf(p); return v >= 16 && v < 48 && (e 
 // How long it takes to gather a host: a war band in days, feudal levies over months, a railway mobilisation in weeks.
 const musterTicks = e => e <= 1 ? 15 : e <= 3 ? 45 : e <= 5 ? 60 : e <= 7 ? 35 : 20;
 function returnGear(p, t) {
+  if (p.gearLock) return;  // hand-picked kit stays with its owner
   if (p.wepOwn && p.wep > 0) t.arsenal[p.wep]++;
   if (p.arm > 0) t.armor[p.arm]++;
   if (p.mount === 2) t.tanks++;
@@ -550,6 +553,7 @@ function warPlan(pol, foes, war) {
     // scorched earth: burn your own country ahead of a host you can't stop, so it finds nothing to eat
     const tt = a.target;
     if (tt.polity === pol && !(tt.scorched > W.tick) && armyStrength(a) > townStrength(tt) * 1.2 && (hasTr(pol.ruler && pol.ruler.alive ? pol.ruler : null, ['cruel']) || GOV[pol.gov].cons >= 1.2 || rnd() < 0.25)) scorch(tt, a);
+    else if (tt.polity === pol && !(tt.scorched > W.tick) && coldRetreat(tt, a)) { scorch(tt, a); burnAhead(tt, a); }  // a cold country gives ground and lets the winter fight
     if (mine.some(m => m.target === a.target || m.chase === a) || !helping(tt)) continue;
     const h = nearestHome(a.target.x, a.target.y, W.landId[a.target.i]);
     if (h && farOK(tt, h) && rnd() < 0.7) { const m = sendHelp(raiseArmy(h, a.target, war, 'intercept'), tt); if (m) { m.chase = a; return; } }
@@ -572,7 +576,7 @@ function warPlan(pol, foes, war) {
   }
   if (!tgt) return;
   // nobody starts a campaign in a northern winter before there are railways to feed it: the armies go into winter quarters
-  if ((pol.era || 0) < 6 && seasonAt(home.y) < -0.07 && W.temp[home.i] < 0.5 && rnd() < 0.85) return;
+  if ((pol.era || 0) < 6 && seasonAt(home.y) < -0.07 && W.temp[home.i] < 0.5 && !winterReady(home) && rnd() < 0.85) return;
   const weak = tn(home) * home.mod.attack * home.scale < defPower(tgt) * 0.55;
   const raider = (G.raid || weak) && rnd() < 0.7;
   if (rnd() < 0.55 + (pol.mob || 0) * 0.4) raiseArmy(home, tgt, war, raider ? 'raid' : 'conquer');
@@ -906,10 +910,8 @@ function armyAttrition(army) {
   const fever = 0.035 * t.health * t.plague * Math.sqrt(t.contagion) * (n > 60 ? 1.5 : 1) * (army.home.count.fieldhospital ? 0.6 : 1) * (army.goal === 'garrison' ? 0.5 : 1);
   if (rnd() < n * fever * 20 / TPY) { const v = S0[rint(S0.length)]; campDeath(army, v, 'died of camp fever'); }
   if (!S0.length) return;
-  const cold = seasonAt(army.y) < -0.07 && W.temp[i] < 0.5, biome = W.biome[i];
-  if (cold && !t.car && rnd() < n * 0.1 * 20 / TPY) { const v = S0[rint(S0.length)]; campDeath(army, v, 'froze on the march'); }
-  if (!S0.length) return;
-  if (biome === B.DESERT && !t.car && !W.river[i] && rnd() < n * 0.08 * 20 / TPY) { const v = S0[rint(S0.length)]; campDeath(army, v, 'died of thirst on the march'); }
+  // frost, thirst, jungle fever and the heights, by how used to such country the host's people are (climate.js)
+  climAttrition(army, i, t);
   if (!S0.length) return;
   // hired swords go when the money does
   if (army.mercs > 0 && army.pol.cur.unpaid > 0 && rnd() < 0.25) {
@@ -1053,7 +1055,7 @@ function armyUpdate(army) {
         army.saidLand = 1;
         const lx = army.landing ? army.landing.land % W.w : army.x, ly = army.landing ? (army.landing.land / W.w) | 0 : army.y;
         const foe = W.armies.find(o => o.pol !== pol && atWar(pol, o.pol) && o.phase !== 'sail' && (o.x - lx) ** 2 + (o.y - ly) ** 2 < 200);
-        if (foe) { army.morale = Math.max(0, army.morale - 12); for (let q = 0; q < Math.ceil(S0.length * 0.05); q++) { const v = S0[rint(S0.length)]; if (v && v !== army.general) campDeath(army, v, 'killed in the landing'); } }
+        if (foe) { const lm = landMul(army); army.morale = Math.max(0, army.morale - 12 * lm); for (let q = 0; q < Math.ceil(S0.length * 0.05 * lm); q++) { const v = S0[rint(S0.length)]; if (v && v !== army.general) campDeath(army, v, 'killed in the landing'); } }
         if (menOf(army) >= 60) chronT('war', foe ? `The ${army.name} lands under the guns of the ${foe.name}, and pays for every yard of beach.` : `The ${army.name} comes ashore unopposed.`, army.target);
       }
     }
@@ -1063,6 +1065,7 @@ function armyUpdate(army) {
   let sx = 0, sy = 0, n = 0;
   for (let k = 0; k < S0.length; k++) { const p = S0[k]; if (p.aboard) continue; sx += p.ti % W.w; sy += (p.ti / W.w) | 0; n++; }
   if (n) { army.x = sx / n; army.y = sy / n; }
+  if (typeof bridgesArmy === 'function') bridgesArmy(army);  // bridges burnt behind a retreat or before a march (bridges.js)
   if (army.general && !army.general.alive) {  // someone has to take over
     let best = null, bs = -1;
     for (const p of S0) { const v = p.leadM * 3 + Math.min(p.xp, 30) * 0.1 + p.fame * 0.5; if (v > bs) { bs = v; best = p; } }
@@ -1106,7 +1109,7 @@ function armyUpdate(army) {
   // nobody crosses a northern winter who can help it
   const here = Math.round(army.y) * W.w + Math.round(army.x), winter = seasonAt(army.y) < -0.07 && W.temp[here] < 0.45 && !army.home.mod.car && (W.tick - army.start) > 80;
   const nearTarget = Math.hypot(army.x - tg.x, army.y - tg.y) < 18;
-  army.camp = winter && !nearTarget;
+  army.camp = winter && !nearTarget && !winterReady(army.home);  // a host from the cold country marches on through it
   if (army.camp) return;
   // a host sent to stop another goes looking for it instead of waiting at home
   const ch = army.chase;
@@ -1123,7 +1126,7 @@ function armyUpdate(army) {
   if (!army.path) { planRoute(army); return; }
   // the head of the column moves on at the pace of its slowest
   const P = army.path, L = P.length - 1;
-  let budget = 20 * 2.5 * army.home.mod.speed * (army.guns.length ? 0.8 : 1) * clamp(army.morale / 50, 0.7, 1.1);
+  let budget = 20 * 2.5 * army.home.mod.speed * (army.guns.length ? 0.8 : 1) * clamp(army.morale / 50, 0.7, 1.1) * climPace(army);
   if (army.goal === 'relieve') budget *= 1.2;
   if (army.forced) {
     budget *= 1.45;
@@ -1187,12 +1190,13 @@ function encounter(army) {
     const defending = army.goal === 'relieve' || army.goal === 'intercept' || army.goal === 'garrison';
     // Fabian war: a careful general who is badly outnumbered won't give battle at all, but shadows the enemy, cuts up its foragers and burns its wagons
     const g = army.general && army.general.alive ? army.general : null;
-    if (mine < theirs * 0.5 && g && army.goal !== 'garrison' && army.goal !== 'raid' && army.soldiers.length >= 10 && (hasTr(g, SLY) || hasTr(g, WARY) || g.leadM >= 1.2)) {
+    const ww = winterWait(army, o);  // at home in its own winter, against a host that is not: let the cold do the fighting
+    if (mine < theirs * (ww ? 0.9 : 0.5) && g && army.goal !== 'garrison' && army.goal !== 'raid' && army.soldiers.length >= 10 && (ww || hasTr(g, SLY) || hasTr(g, WARY) || g.leadM >= 1.2)) {
       if (W.tick - (army.harryT || 0) < 60) continue;
       army.harryT = W.tick;
       o.food *= 0.88; o.morale = Math.max(0, o.morale - 3);
       for (let q = 0; q < 2; q++) { const v = o.soldiers[rint(o.soldiers.length)]; if (v && v !== o.general) campDeath(o, v, 'cut down while foraging'); }
-      if (!army.fabian) { army.fabian = 1; if (menOf(army) >= 60) chronT('war', `${g.name} will not give battle to the larger ${o.name}, and harries its foragers and baggage instead.`, army.home); }
+      if (!army.fabian) { army.fabian = 1; if (menOf(army) >= 60) chronT('war', ww ? `${g.name} will not give battle to the ${o.name} in the snow, and harries it while the winter does the rest.` : `${g.name} will not give battle to the larger ${o.name}, and harries its foragers and baggage instead.`, army.home); }
       continue;
     }
     if (!defending && mine < theirs * 0.45 && rnd() < 0.7 && W.tick - army.lastEnc > 100) {

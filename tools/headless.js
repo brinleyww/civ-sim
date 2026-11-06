@@ -1,6 +1,6 @@
 // Runs the simulation with no screen, for balance checks: node tools/headless.js [seed] [years] [w] [h] [type]
 const fs = require('fs'), path = require('path'), vm = require('vm');
-for (const f of ['core', 'worldgen', 'earth', 'tech', 'inventions', 'techgen', 'techfam_a', 'techfam_b', 'techfam_c', 'content', 'traits', 'society', 'discovery', 'politics', 'people', 'money', 'life', 'weather', 'snow', 'canals', 'roads', 'ships', 'ports', 'war', 'battle', 'walls', 'food', 'revolutions', 'modern', 'labour', 'offices', 'education', 'statecraft', 'citylife']) {
+for (const f of ['core', 'worldgen', 'earth', 'tech', 'inventions', 'techgen', 'techfam_a', 'techfam_b', 'techfam_c', 'techfam_d', 'content', 'traits', 'society', 'discovery', 'politics', 'people', 'money', 'life', 'weather', 'snow', 'canals', 'roads', 'bridges', 'ships', 'ports', 'war', 'battle', 'climate', 'walls', 'food', 'revolutions', 'modern', 'labour', 'offices', 'education', 'statecraft', 'citylife']) {
   vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'js', f + '.js'), 'utf8'), { filename: f + '.js' });
 }
 const [seed, years, w, h, type, inv] = [+process.argv[2] || 7, +process.argv[3] || 1000, +process.argv[4] || 300, +process.argv[5] || 210, process.argv[6] || 'continents', +process.argv[7] || 1];

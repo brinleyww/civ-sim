@@ -20,19 +20,25 @@ const holdOf = (D, t) => D.hold * clamp(1 + Math.log(Math.max(1, t.mod.cargo)) *
 const SHIP_NAMES_A = ['Swift', 'Grey', 'Lucky', 'Sea', 'Salt', 'Morning', 'Evening', 'Golden', 'Iron', 'Silver', 'Wandering', 'Faithful', 'Bold', 'Northern', 'Southern', 'Merry', 'Stormy', 'Patient'];
 const SHIP_NAMES_B = ['Gull', 'Star', 'Wave', 'Maiden', 'Fortune', 'Heron', 'Dolphin', 'Wind', 'Crown', 'Rose', 'Promise', 'Tern', 'Pilgrim', 'Lady', 'Horizon'];
 
+// The harbour's water: of the water touching a port, the biggest stretch of it, never a pond too small to sail on.
+const PORT_MIN_WATER = 30;
 function portOf(t) {
-  if (t.portI >= 0 && W.seaNet[t.portI]) return t.portI;
+  const sz = netSizes();
+  if (t.portI >= 0 && W.seaNet[t.portI] && sz[W.seaNet[t.portI]] >= PORT_MIN_WATER) return t.portI;
   t.portI = -1;
+  let best = 0;
   for (const b of t.blds) {
     if (!b.done || b.type === 'house') continue;
     const def = BLD[b.type];
     if (!def || !def.port) continue;
     for (let dy = -1; dy <= b.size; dy++) for (let dx = -1; dx <= b.size; dx++) {
       const j = b.i + dx + dy * W.w;
-      if (j > 0 && j < W.occ.length && W.seaNet[j]) { t.portI = j; t.portB = b.i; return j; }
+      if (j <= 0 || j >= W.occ.length || !W.seaNet[j]) continue;
+      const n = sz[W.seaNet[j]] || 0;
+      if (n >= PORT_MIN_WATER && n > best) { best = n; t.portI = j; t.portB = b.i; }
     }
   }
-  return -1;
+  return t.portI;
 }
 // What water a hull can use: only sea-going ones cross the deep, only shallow ones go up rivers and through barge cuts.
 function shipSpec(D, home) {
@@ -606,6 +612,7 @@ function shipTick() {
   for (let k = S0.length - 1; k >= 0; k--) {
     const s = S0[k];
     if (!s) continue;  // a ship sunk earlier this tick shortens the list
+    if (s.state !== 1 && s.state !== 2 && (tick & 63) === (s.id & 63)) { unstack(s); if (s.sunk) continue; }  // nobody lies on top of another
     if (s.state === 0) { if (tick % 8 === (s.id & 7)) shipThink(s); continue; }
     if (s.state >= 2) { if ((tick & 3) === (s.id & 3)) harbourTick(s); continue; }  // alongside, or at anchor waiting for a berth
     const def = shipDef(s), m = s.home ? s.home.mod.speed : 1, big = bigHull(def);

@@ -63,6 +63,7 @@
 <aside id="right" class="panel" hidden>
   <div id="rightBar"><b id="rightName"></b><button class="min" data-min="right" aria-label="Minimise details" title="Minimise">–</button><button class="min" data-act="close" aria-label="Close" title="Close">×</button></div>
   <div class="body" id="rightBody"></div>
+  <details id="rightEdit" hidden><summary>Edit this person</summary><div id="editBody"></div></details>
 </aside>
 
 <div id="focus" hidden>
@@ -80,20 +81,35 @@
   </div>
   <div id="tools" class="tbar">
     <div id="toolTabs" role="group" aria-label="Tool groups">
-      <button data-tab="fate" class="on">Fate</button><button data-tab="land">Land</button><button data-tab="res">Resources</button><button data-tab="soil">Soil</button>
+      <button data-tab="fate" class="on">Fate</button><button data-tab="people">People</button><button data-tab="realms">Realms</button><button data-tab="land">Land</button><button data-tab="res">Resources</button><button data-tab="soil">Soil</button>
     </div>
     <div class="toolset" data-set="fate">
       <button data-p="rain" title="Click land: years of good rain">Rain</button>
       <button data-p="drought" title="Click land: harvests fail in this region">Drought</button>
+      <button data-p="bounty" title="Click land: years of plenty for every settlement in this region">Bounty</button>
+      <button data-p="famine" title="Click land: the stores rot and the harvests fail around here for a few years">Famine</button>
       <button data-p="plague" title="Click a town: a new disease breaks out">Plague</button>
       <button data-p="fire" title="Click a town: a great fire">Fire</button>
-      <button data-p="inspire" title="Click a town: it works out something new">Inspire</button>
-      <button data-p="genius" title="Click a town: a genius is born there">Genius</button>
-      <button data-p="bless" title="Click a town: stores fill and spirits lift">Bless</button>
-      <button data-p="tribe" title="Click land: a new band of people appears here">New tribe</button>
+      <button data-p="flood" title="Click by a river or coast: the low ground floods for a season. Fields drown, weak houses go, the mud left is rich">Flood</button>
+      <button data-p="quake" title="Click anywhere: the earth shakes. Buildings fall and people die; good engineering helps">Earthquake</button>
       <button data-p="meteor" title="Click anywhere: a rock falls from the sky">Meteor</button>
+      <button data-p="tribe" title="Click land: a new band of people appears here">New tribe</button>
+    </div>
+    <div class="toolset" data-set="people" hidden>
+      <button data-p="inspire" title="Click a town: it works out something new">Inspire</button>
+      <button data-p="genius" title="Click a town: a young person there turns out to be a genius, and works on new ideas every year they live. Their discoveries carry their name">Genius</button>
+      <button data-p="hero" title="Click a town: a hero comes of age there: brave, charismatic and born to lead">Hero</button>
+      <button data-p="prophet" title="Click a town: a prophet founds a new faith there, or spreads the one it has to the towns around">Prophet</button>
+      <button data-p="bless" title="Click a town: blessed for 8 years: heavy harvests, good health, more children, no famine and glad hearts">Bless</button>
+      <button data-p="curse" title="Click a town: cursed for 8 years: poor harvests, sickness, fewer children and unrest">Curse</button>
+      <button data-p="migrate" title="Click a town: a large party sets out to find new land and found a settlement of its own">Migration</button>
+      <button data-p="gift" title="Click a town that knows something, then another: the second learns the most advanced thing the first can teach it (repeat: more)">Gift of knowledge</button>
+    </div>
+    <div class="toolset" data-set="realms" hidden>
       <button data-p="war" title="Click a town: its realm goes to war with the nearest rival">War</button>
       <button data-p="peace" title="Click a town: every war its realm is in stops">Peace</button>
+      <button data-p="ally" title="Click a town, then a town of another realm: the two realms make peace and swear an alliance">Alliance</button>
+      <button data-p="golden" title="Click a town: its realm enters a golden age of learning, with faster research for at least 15 years">Golden age</button>
       <button data-p="revolt" title="Click a town: it breaks away from its realm">Revolt</button>
     </div>
     <div class="toolset" data-set="land" hidden>
@@ -192,6 +208,7 @@
 <script src="js/techfam_a.js"></script>
 <script src="js/techfam_b.js"></script>
 <script src="js/techfam_c.js"></script>
+<script src="js/techfam_d.js"></script>
 <script src="js/content.js"></script>
 <script src="js/traits.js"></script>
 <script src="js/society.js"></script>
@@ -204,10 +221,12 @@
 <script src="js/snow.js"></script>
 <script src="js/canals.js"></script>
 <script src="js/roads.js"></script>
+<script src="js/bridges.js"></script>
 <script src="js/ships.js"></script>
 <script src="js/ports.js"></script>
 <script src="js/war.js"></script>
 <script src="js/battle.js"></script>
+<script src="js/climate.js"></script>
 <script src="js/walls.js"></script>
 <script src="js/food.js"></script>
 <script src="js/revolutions.js"></script>
@@ -226,6 +245,7 @@
 <script src="js/vehicleart.js"></script>
 <script src="js/railart.js"></script>
 <script src="js/junctions.js"></script>
+<script src="js/bridgeart.js"></script>
 <script src="js/parkart.js"></script>
 <script src="js/render.js"></script>
 <script src="js/warfx.js"></script>

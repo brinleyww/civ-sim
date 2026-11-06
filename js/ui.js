@@ -104,8 +104,9 @@ function taskText(p) {
 function updateInspector() {
   const el = $('right');
   const s = Render.sel;
-  if (!s) { el.hidden = true; return; }
+  if (!s) { el.hidden = true; UI.editP = null; return; }
   el.hidden = false;
+  editSync(s);
   let h = '', title = '';
   if (s.kind === 'person') { h = personHTML(s.obj); title = s.obj.name; }
   else if (s.kind === 'town') { title = s.obj.name; h = !s.obj.alive ? `<div class="sub">Abandoned. Only ruins remain.</div>` : townHTML(s.obj); }
@@ -122,6 +123,7 @@ function updateInspector() {
   body.innerHTML = h; body._h = h;
   body.scrollTop = scroll;
 }
+const boonTags = t => t.boon ? Object.keys(t.boon).filter(k => BOON[k] && boonLeft(t, k)).map(k => { const n = boonLeft(t, k); return `<b style="color:${BOON[k].col}">${BOON[k].name}: ${n} year${n === 1 ? '' : 's'} left</b>`; }) : [];
 const tagHTML = (T, extra) => `<span class="trait" style="border-color:${T.col};color:${T.col}" title="${esc(T.about)}">${esc(T.name)}${extra || ''}</span>`;
 function personHTML(p) {
   const a = Math.floor(ageOf(p));
@@ -130,12 +132,14 @@ function personHTML(p) {
   const title = p.leader && p.town.polity.ruler === p ? `${GOV[p.town.polity.gov].ruler[p.sex === 0 ? 0 : 1]} of ${esc(p.town.polity.name)}` : p.idleY > 0 ? `Out of work${p.lostOcc >= 0 ? ' (was a ' + OCCS[p.lostOcc].name.toLowerCase() + ')' : ''}` : occName(p);
   const kid = p.lastKid && p.lastKid.alive ? p.lastKid : null;
   const focusing = UI.follow === p;
-  const gear = p.army || p.btl ? `<span>Armed with</span><b>${esc(WEAPONS[p.wep || 0].name)}${p.ammo > 0 ? ` (${Math.floor(p.ammo)} shots)` : ''}${p.shield ? ' and a shield' : ''}</b><span>Wearing</span><b>${esc(ARMORS[p.arm || 0].name)}</b>${p.mount ? `<span>Riding</span><b>${p.mount === 2 ? 'A tank' : 'A warhorse'}</b>` : ''}${p.unit ? `<span>Company</span><b>${esc(p.unit.name)}${p.unit.cap === p ? ' (captain)' : ''}</b>` : ''}${p.foe && p.foe.alive ? `<span>Fighting</span><b><a class="link" data-act="person" data-id="${p.foe.ix}">${esc(p.foe.name)}</a> of ${esc(p.foe.town.polity.name)}</b>` : ''}` : '';
+  const gw = p.gWork >= 0 ? TECHS[p.gWork] : null;
+  const genius = gw && p.alive && !p.town.tech[gw.ix] ? `<span>Working on</span><b>${esc(gw.name)} (${Math.min(99, Math.floor(p.town.prog[gw.ix] / inventCost(p.town, gw) * 100))}%)</b>` : '';
+  const gear = p.army || p.btl || p.gearLock || p.wep || p.arm || p.mount ? `${p.gearLock ? '<span>Kit</span><b>hand-picked</b>' : ''}<span>Armed with</span><b>${esc(WEAPONS[p.wep || 0].name)}${p.ammo > 0 ? ` (${Math.floor(p.ammo)} shots)` : ''}${p.shield ? ' and a shield' : ''}</b><span>Wearing</span><b>${esc(ARMORS[p.arm || 0].name)}</b>${p.mount ? `<span>Riding</span><b>${p.mount === 2 ? 'A tank' : 'A warhorse'}</b>` : ''}${p.unit ? `<span>Company</span><b>${esc(p.unit.name)}${p.unit.cap === p ? ' (captain)' : ''}</b>` : ''}${p.foe && p.foe.alive ? `<span>Fighting</span><b><a class="link" data-act="person" data-id="${p.foe.ix}">${esc(p.foe.name)}</a> of ${esc(p.foe.town.polity.name)}</b>` : ''}` : '';
   const hp = p.btl || p.army ? `${bar('Hit points', Math.max(0, p.hp), maxHP(p), '#7fd06a', Math.max(0, Math.round(p.hp)))}${bar('Stamina', p.stam, 100, '#7fb6d8', Math.round(p.stam))}${bar('Nerve', p.mor, 100, '#e6c170', Math.round(p.mor))}${p.wound || p.bleed > 0 ? `<div class="sub" style="color:#ff8f7a">${p.wound === 2 ? 'Wounded in the arm. ' : p.wound === 1 ? 'Wounded in the leg. ' : ''}${p.bleed > 0 ? 'Bleeding.' : ''}</div>` : ''}` : '';
   return `<div class="sub">${title}, ${p.alive ? 'age ' + a : 'died at ' + a}</div>
   <div class="tags">${p.traits.map(k => tagHTML(TRAITS[k])).join('') || '<span>Nothing remarkable</span>'}</div>
   <div class="btnrow">${p.alive ? `<button data-act="focus" class="wide">${focusing ? 'Stop focusing' : 'Focus on this person'}</button>` : kid ? `<button data-act="focuskid" class="wide">Focus on their child, ${esc(kid.name)}</button>` : ''}</div>
-  <div class="kv"><span>Doing</span><b>${esc(taskText(p))}</b>
+  <div class="kv"><span>Doing</span><b>${esc(taskText(p))}</b>${genius}${p.gN ? `<span>Discoveries</span><b>${p.gN}</b>` : ''}
   <span>Home town</span><b>${townLink(p.town)}</b>
   <span>Realm</span><b>${polLink(p.town.polity)}</b>
   <span>Culture</span><b>${esc(p.culture.name)}</b>
@@ -156,6 +160,80 @@ function personHTML(p) {
   ${eduPersonHTML(p)}<h4>Abilities</h4>${hp}
   ${statBar('Strength', p.str)}${statBar('Speed', p.spdM)}${statBar('Work', p.workM)}${statBar('Ideas', p.wisM)}${statBar('Bravery', p.moraleM)}${statBar('Leadership', p.leadM)}${statBar('Lifespan', 1 / p.lifeM)}${statBar('Resists disease', 1 / p.sickM)}
   <h4>Life</h4><div class="biolog">${p.log.slice().reverse().map(esc).join('<br>') || 'Nothing yet of note.'}</div>`;
+}
+// ---- the person editor: built once per person (and after a change that needs it), outside the panel's constant redraw ----
+const STAT_ED = [['hpMax', 'Hit points', 1], ['str', 'Strength'], ['spdM', 'Speed'], ['wisM', 'Ideas'], ['workM', 'Work'], ['moraleM', 'Bravery'], ['leadM', 'Leadership'], ['warM', 'Warlike'], ['aimM', 'Aim'], ['fertM', 'Fertility'], ['lifeM', 'Ageing (lower: longer life)'], ['sickM', 'Sickliness']];
+const techEra = id => { const ix = id ? TECH_IX[id] : undefined; return ix === undefined ? 0 : TECHS[ix].era; };
+function editSync(s) {
+  const box = $('rightEdit');
+  const p = s && s.kind === 'person' && s.obj.alive ? s.obj : null;
+  box.hidden = !p;
+  if (!p) { UI.editP = null; return; }
+  if (UI.editP === p) return;
+  UI.editP = p; $('editBody').innerHTML = editHTML(p);
+}
+function editHTML(p) {
+  const opt = (v, cur, label) => `<option value="${v}"${v === cur ? ' selected' : ''}>${esc(label)}</option>`;
+  const has = new Set(p.traits), ov = p.statOv || {}, ct = p.carry > 0 ? p.ctype : -1;
+  return `<div class="ed">
+  <h5>Traits</h5><div class="tags">${p.traits.map(k => `<span class="trait" style="border-color:${TRAITS[k].col};color:${TRAITS[k].col}" title="${esc(TRAITS[k].about)}">${esc(TRAITS[k].name)}<a data-ed="rmtrait" data-k="${k}" title="Remove">×</a></span>`).join('') || '<span>None</span>'}</div>
+  <div class="edrow"><select id="edTrait" aria-label="Trait to add">${TRAITS.filter(T => !has.has(T.ix)).map(T => `<option value="${T.ix}" title="${esc(T.about)}">${esc(T.name)}${T.opp ? ` (ends ${TRAITS[TRAIT_IX[T.opp]].name.toLowerCase()})` : ''}</option>`).join('')}</select><button data-ed="addtrait">Add</button></div>
+  <h5>Abilities</h5><div class="edgrid">${STAT_ED.map(([k, label, int]) => `<label${ov[k] !== undefined ? ' class="ov"' : ''}>${label}<input type="number" data-st="${k}" step="${int ? 5 : 0.05}" min="${int ? 1 : 0.05}" max="${int ? 5000 : 10}" value="${int ? Math.round(p[k]) : (+p[k]).toFixed(2)}"></label>`).join('')}</div>
+  ${p.statOv ? '<button data-ed="clearstats">Back to what their traits give</button>' : ''}
+  <h5>Life</h5><div class="edgrid"><label>Age<input type="number" data-ed="age" min="0" max="120" step="1" value="${Math.floor(ageOf(p))}"></label><label>Work<select data-ed="job">${JOB_NAME.map((n, j) => opt(j, p.job, n)).join('')}</select></label></div>
+  <h5>Kit${p.gearLock ? ': kept, musters leave it alone' : ''}</h5>
+  <div class="edgrid wide"><label>Weapon<select data-ed="wep">${WEAPONS.map((w, k) => opt(k, p.wep || 0, `${w.name} · ${ERAS[techEra(w.tech)]}`)).join('')}</select></label>
+  <label>Armour<select data-ed="arm">${ARMORS.map((a, k) => opt(k, p.arm || 0, a.tech ? `${a.name} · ${ERAS[techEra(a.tech)]}` : a.name)).join('')}</select></label></div>
+  <div class="edgrid"><label>Mount<select data-ed="mount">${opt(0, p.mount || 0, 'None')}${opt(1, p.mount || 0, 'Warhorse')}${opt(2, p.mount || 0, 'Tank')}</select></label><label>Ammunition<input type="number" data-ed="ammo" min="0" max="5000" step="1" value="${Math.floor(p.ammo || 0)}"></label>
+  <label class="chk"><input type="checkbox" data-ed="shield"${p.shield ? ' checked' : ''}> Shield</label><span></span>
+  <label>Carrying<select data-ed="ctype">${opt(-1, ct, 'Nothing')}${RES_NAME.map((n, r) => opt(r, ct, n)).join('')}</select></label><label>Amount<input type="number" data-ed="carry" min="0" max="999" step="1" value="${ct >= 0 ? +p.carry.toFixed(1) : 0}"></label></div>
+  ${p.gearLock ? '<button data-ed="unlock">Clear: let the town issue their kit again</button>' : ''}
+  <div class="sub">Changes last. Work is a leaning: a town with no need of that trade still sets them to something else.</div>
+  </div>`;
+}
+const ED_CLICK = { addtrait: 1, rmtrait: 1, clearstats: 1, unlock: 1 };
+function editAct(e) {
+  const el = e.target.closest('[data-ed],[data-st]'), s = Render.sel, p = s && s.kind === 'person' ? s.obj : null;
+  if (!el || !p || !p.alive) return;
+  const ed = el.dataset.ed, st = el.dataset.st, t = p.town, box = $('editBody');
+  if ((e.type === 'click') !== !!ED_CLICK[ed]) return;  // buttons act on click, fields on change
+  const wasOv = !!p.statOv, wasLock = !!p.gearLock;
+  let again = !!ED_CLICK[ed];
+  if (st) {
+    const v = +el.value;
+    if (!(v > 0)) return;
+    (p.statOv || (p.statOv = {}))[st] = st === 'hpMax' ? Math.round(v) : v;
+    applyTraits(p); el.parentNode.classList.add('ov');
+  }
+  else if (ed === 'addtrait') { const T = TRAITS[+$('edTrait').value]; if (T) { forceTrait(p, T.id); plog(p, `Became ${T.name.toLowerCase()}.`); } }
+  else if (ed === 'rmtrait') dropTrait(p, TRAITS[+el.dataset.k].id);
+  else if (ed === 'clearstats') { p.statOv = null; applyTraits(p); }
+  else if (ed === 'unlock') p.gearLock = 0;
+  else if (ed === 'age') p.born = W.tick - Math.floor(clamp(+el.value || 0, 0, 120) * TPY);
+  else if (ed === 'job') {
+    const j = +el.value;
+    if (t.jobs[p.job] > 0) t.jobs[p.job]--;
+    p.job = j; t.jobs[j]++; p.skill = 0;  // taken up at their next decision
+    if (j > J.ELDER) { const o = p.statOv || (p.statOv = {}); o.jb = j; o.jbM = Math.max(p.jbM, 1.3); applyTraits(p); }
+  }
+  else if (ed === 'ctype' || ed === 'carry') {
+    const r = +box.querySelector('[data-ed=ctype]').value, n = +box.querySelector('[data-ed=carry]').value || 0;
+    if (r < 0 || (ed === 'carry' && n <= 0)) { p.carry = 0; p.ctype = -1; again = ed === 'carry'; }
+    else { p.ctype = r; p.carry = n > 0 ? n : 5; again = n <= 0; }
+  }
+  else {
+    // kit: anything from any age works at full strength, and stays theirs (war.js leaves locked kit alone at the muster)
+    p.gearLock = 1; p.wepOwn = false;
+    if (ed === 'wep') { const G = WEAPONS[p.wep = +el.value]; p.ammo = G.kind > 0 ? Math.max(p.ammo || 0, G.ammo || 24) : 0; again = true; }
+    else if (ed === 'arm') p.arm = +el.value;
+    else if (ed === 'mount') p.mount = +el.value;
+    else if (ed === 'shield') p.shield = el.checked;
+    else if (ed === 'ammo') p.ammo = Math.max(0, +el.value || 0);
+  }
+  p.spd = walkSpeed(p);
+  p.hp = p.btl ? Math.min(p.hp, maxHP(p)) : maxHP(p);
+  if (again || wasOv !== !!p.statOv || wasLock !== !!p.gearLock) UI.editP = null;
+  updateInspector();
 }
 const statBar = (label, v) => bar(label, clamp(v, 0, 2), 2, v >= 1.05 ? '#8cc66a' : v <= 0.95 ? '#e0a070' : '#8f8775', v === 1 ? 'avg' : `${Math.round(v * 100)}%`);
 const TRANS_NAME = ['On foot', 'Pack animals', 'Wagons', 'Carriages and bicycles', 'Trams and buses', 'Cars', 'Electric cars', 'Self-driving pods'];
@@ -188,7 +266,7 @@ function townHTML(t) {
   const blds = {};
   for (const b of t.blds) { if (!b.done || b.type === 'hearth') continue; const nm = b.type === 'house' ? HOUSES[b.tier].name : BLD[b.type].name; blds[nm] = (blds[nm] || 0) + 1; }
   const rose = t.risings && t.risings[t.risings.length - 1];
-  const status = [t.occupier ? `<b style="color:#ff8f7a">Occupied by ${esc(t.occupier.name)}</b>` : '', t.polity.rebel && !t.polity.rebel.over ? `<b style="color:#ff8f7a">In revolt against ${esc((W.polities[t.polity.rebel.from] || {}).name || 'its realm')} since ${t.polity.rebel.start | 0}</b>` : '', rose && !t.polity.rebel ? `<span>Rose against ${esc(rose.against)} in ${rose.yr}: ${rose.won ? 'won its freedom' : 'crushed'}</span>` : '',t.attack ? '<b style="color:#ff8f7a">Under attack</b>' : '', t.sick > 0 ? '<b style="color:#c3e36a">Plague</b>' : '', t.famine > 1 ? '<b style="color:#f0b46a">Famine</b>' : '', t.crowd > 1.15 ? '<b style="color:#f0b46a">Overcrowded</b>' : '', t.unrest > 45 ? '<b style="color:#ff8f7a">Restless</b>' : '', t.blockaded > W.tick ? '<b style="color:#ff8f7a">Blockaded</b>' : ''].filter(Boolean).join(' · ');
+  const status = [t.occupier ? `<b style="color:#ff8f7a">Occupied by ${esc(t.occupier.name)}</b>` : '', t.polity.rebel && !t.polity.rebel.over ? `<b style="color:#ff8f7a">In revolt against ${esc((W.polities[t.polity.rebel.from] || {}).name || 'its realm')} since ${t.polity.rebel.start | 0}</b>` : '', rose && !t.polity.rebel ? `<span>Rose against ${esc(rose.against)} in ${rose.yr}: ${rose.won ? 'won its freedom' : 'crushed'}</span>` : '',t.attack ? '<b style="color:#ff8f7a">Under attack</b>' : '', t.sick > 0 ? '<b style="color:#c3e36a">Plague</b>' : '', t.famine > 1 ? '<b style="color:#f0b46a">Famine</b>' : '', t.crowd > 1.15 ? '<b style="color:#f0b46a">Overcrowded</b>' : '', t.unrest > 45 ? '<b style="color:#ff8f7a">Restless</b>' : '', t.blockaded > W.tick ? '<b style="color:#ff8f7a">Blockaded</b>' : '', ...boonTags(t)].filter(Boolean).join(' · ');
   // what this town is closest to working out
   const prog = [];
   const tot = t.lastTotal || 0;
@@ -339,6 +417,7 @@ function armyHTML(a) {
   return `<div class="sub">${esc(a.pol.name)}, ${esc(phase)} ${esc(goal)}</div>
   <div class="kv"><span>Soldiers</span><b>${fmt(menOf(a))}</b>${(a.rep || 1) > 1 ? `<span>On the map</span><b>${a.soldiers.length} figures, ${a.rep} men each</b>` : ''}${a.phase === 'muster' ? `<span>Mobilising</span><b>${a.contingents ? `with ${a.contingents} towns' contingents` : 'at the rally point'}</b>` : ''}${a.levy ? `<span>Raised as</span><b>a levy, it melts away at harvest</b>` : ''}${a.unpaid ? `<span>Pay</span><b>in arrears</b>` : ''}<span>General</span><b>${a.general && a.general.alive ? `<a class="link" data-act="person" data-id="${a.general.ix}">${esc(a.general.name)}</a>` : 'dead'}</b><span>From</span><b>${townLink(a.home)}</b><span>Kills</span><b>${a.kills}</b>${a.deserted ? `<span>Deserted</span><b>${a.deserted}</b>` : ''}</div>
   ${bar('Morale', a.morale, 100, '#e6c170', Math.round(a.morale))}${bar('Supplies', days, 2, a.starving ? '#e0705a' : '#8cc66a', a.starving ? 'starving' : `${days.toFixed(1)} years`)}
+  <div class="sub">${esc(armyClimateText(a))}</div>
   <h4>Companies</h4>${a.units.filter(u => u.men.length).map(u => `<div class="unitRow"><span>${esc(u.name)}</span><em>${u.men.length}</em></div>`).join('')}
   <h4>Weapons</h4><div class="tags">${Object.entries(c).sort((x, y) => y[1] - x[1]).map(([k, v]) => `<span>${v} ${esc(k)}</span>`).join('')}</div>
   <h4>Armour</h4><div class="tags">${Object.entries(d).sort((x, y) => y[1] - x[1]).map(([k, v]) => `<span>${v} ${esc(k)}</span>`).join('')}</div>

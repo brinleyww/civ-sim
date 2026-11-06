@@ -257,14 +257,70 @@ function freeBerth(t, s) {
   }
   return best;
 }
-// A free mooring for a ship that is waiting or laid up: the first one nobody else is on.
+// A free spot for a ship that is waiting or laid up: the nearest open water to the harbour, reached by water, that no other
+// ship lying there is too close to (bigger hulls keep further apart) and off the shipping lanes, so ships passing aren't blocked.
+const MOOR_BUF = new Int32Array(4096), moorSeen = new Map();
+const moorGap = s => { const c = shipCls(shipDef(s)); return c >= 4 ? 3 : c >= 2 ? 2 : 1.5; };
 function moorTile(t, s) {
-  const H = harbour(t);
-  if (!H.moor.length) return portOf(t);
-  const taken = new Set();
-  for (const o of W.ships) if (o !== s && o.state !== 1 && (o.state !== 2)) taken.add(o.at);
-  for (const j of H.moor) if (!taken.has(j)) return j;
-  return H.moor[(s.id * 7) % H.moor.length];
+  const a = portOf(t);
+  if (a < 0) return a;
+  const H = harbour(t), berth = new Set(); for (const x of H.berths) berth.add(x.i);
+  return moorNear(a, s, berth);
+}
+// Outward by water from a: the first tile with room off the lanes; failing that one on a lane; failing that (a crowded river
+// mooring) anywhere no other hull actually lies on.
+function moorNear(a, s, berth) {
+  const w = W.w, net = W.seaNet[a], ax = a % w, ay = (a / w) | 0, g = moorGap(s);
+  const lie = [];
+  for (const o of W.ships) {
+    if (o === s || o.sunk || o.state === 1) continue;
+    const ox = o.at % w, oy = (o.at / w) | 0;
+    if (Math.abs(wdx(ax, ox)) < 40 && Math.abs(oy - ay) < 40) lie.push(ox, oy, moorGap(o));
+  }
+  const room = (j, tight) => {
+    const x = j % w, y = (j / w) | 0;
+    for (let k = 0; k < lie.length; k += 3) { const d = tight ? 1 : Math.max(lie[k + 2], g); if (Math.abs(wdx(x, lie[k])) < d && Math.abs(lie[k + 1] - y) < d) return false; }
+    return true;
+  };
+  moorSeen.clear(); let head = 0, tail = 0, lane = -1, tight = -1;
+  MOOR_BUF[tail++] = a; moorSeen.set(a, 1);
+  while (head < tail) {
+    const i = MOOR_BUF[head++];
+    if (i !== a && W.ice[i] <= 80 && !(berth && berth.has(i)) && Math.hypot(wdx(ax, i % w), ((i / w) | 0) - ay) >= 1.5) {
+      const busy = W.lane[i] >= SEA_LANE || (W.seaW && W.seaW[i]);
+      if (room(i, false)) { if (!busy) return i; if (lane < 0) lane = i; }
+      else if (tight < 0 && room(i, true)) tight = i;
+    }
+    for (let k = 0; k < 4 && tail < MOOR_BUF.length; k++) {
+      const j = stepWrap(i, k);
+      if (j < 0 || j >= W.water.length || moorSeen.has(j) || W.seaNet[j] !== net) continue;
+      moorSeen.set(j, 1); MOOR_BUF[tail++] = j;
+    }
+  }
+  return lane >= 0 ? lane : tight >= 0 ? tight : a;
+}
+// A ship lying still on top of another (launched at the quay, back with no berth, held up by the weather) moves off to its own spot.
+function unstack(s) {
+  const t = s.hTown && s.hTown.alive ? s.hTown : s.home;
+  if (!t || !t.alive || s.berth) return;
+  const a = portOf(t), w = W.w;
+  if (a < 0) {
+    // home has no harbour on open water any more: a hull stranded on a pond is broken up for timber, others find room
+    if ((netSizes()[W.seaNet[s.at]] || 0) < PORT_MIN_WATER) { if (!s.pass.length && !s.army) { if (t.stock) t.stock[R.WOOD] += 4; loseShip(s, 'broken up'); } return; }
+    if (crowded(s)) moveShipTo(s, moorNear(s.at, s, null));
+    return;
+  }
+  if (Math.abs(wdx(a % w, s.at % w)) > 14 || Math.abs(((a / w) | 0) - ((s.at / w) | 0)) > 14) return;
+  if (crowded(s)) moveShipTo(s, moorTile(t, s));
+}
+function crowded(s) {
+  const w = W.w, x = s.at % w, y = (s.at / w) | 0, g = moorGap(s);
+  for (const o of W.ships) {
+    if (o === s || o.sunk || o.state === 1) continue;
+    const d = Math.max(g, moorGap(o));
+    if (Math.abs(wdx(x, o.at % w)) < d && Math.abs(((o.at / w) | 0) - y) < d && (o.state === 2 || o.id < s.id)) return true;
+  }
+  return false;
 }
 // The entrance: only so many ships can come in or go out a year, more with more quays.
 function entranceGap(t) { let s = 0; for (const b of t.ports) s += b.size; return Math.max(2, Math.round(16 / (1 + s))); }

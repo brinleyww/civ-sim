@@ -136,7 +136,15 @@ function faithYear(t) {
   if (cap0 && cap0 !== t && cap0.faith >= 0 && cap0.faith !== t.faith && lawF < 2) {
     const scienceAge = knows(cap0, 'humanism') || lawF === 1;
     t.unrest = Math.min(100, t.unrest + (scienceAge ? 0.5 : 3));
-    if (!scienceAge && rnd() < 0.02 && tn(t) > 40) { chronT('gov', `Followers of ${F.name} are driven out of ${t.name} on the orders of the ${polityTitle(t.polity)}.`, t); const go = Math.floor(t.members.length * 0.05); for (let k = 0; k < go; k++) { const v = t.members[rint(t.members.length)]; if (v && !v.army && !v.leader && t.partners.length) { const to = pick(t.partners); moveTo(v, to); startMigrate(v, nearTile(to.i, 3)); } } }
+    if (!scienceAge && rnd() < 0.02 && tn(t) > 40) {
+      chronT('gov', `Followers of ${F.name} are driven out of ${t.name} on the orders of the ${polityTitle(t.polity)}.`, t);
+      const go = Math.floor(t.members.length * 0.05), out = new Set();
+      for (let k = 0; k < go * 2 && out.size < go; k++) { const v = t.members[rint(t.members.length)]; if (v && !v.army && !v.leader && !v.aboard && !v.btl) out.add(v); }
+      // enough of them, and they may go off together and build a town of their own faith, owing the crown nothing (people.js)
+      let site = -1;
+      if (out.size >= 12 && rnd() < 0.5) { site = findSite(t, 14, 40, false); if (site >= 0 && W.landId[site] !== W.landId[t.i]) site = -1; }
+      if (site < 0 || !wanderersFound([...out], t, site, 'exiles', true)) for (const v of out) if (t.partners.length) { const to = pick(t.partners); moveTo(v, to); startMigrate(v, nearTile(to.i, 3)); }
+    }
   }
   // religion and neighbours: shared faith warms, different faith cools
   if (rnd() < 0.05) for (const o of t.partners) if (o.polity !== t.polity && o.polity.capital && t.polity.capital === t && o.polity.capital === o) { const of = o.faith >= 0 ? W.faiths[o.faith] : null, sib = of && (of.parent === t.faith || F.parent === o.faith) && yr - Math.max(F.born, of.born) < 120; adjustRel(t.polity, o.polity, o.faith === t.faith ? 1 : sib ? -1.8 : -0.6); }  // wars of religion: a fresh schism is bitterer than an old difference

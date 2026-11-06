@@ -387,6 +387,7 @@ function initInput() {
     else if (act === 'watch') { const b = W.battles.find(x => x.id === id); if (b) { select('battle', b); stopFocus(); centerOn(b.x, b.y, 3.4); setSpeed(1); Game.lastSpeed = 1; } }
   };
   $('right').addEventListener('mousedown', panelAct);
+  $('editBody').addEventListener('change', editAct); $('editBody').addEventListener('click', editAct);  // the person editor (ui.js)
   $('focus').addEventListener('mousedown', panelAct);
   $('techRealm').addEventListener('change', e => { UI.techRealm = +e.target.value; openTech(); });
   $('techTabs').addEventListener('click', e => { if (e.target.dataset.v) { UI.techView = e.target.dataset.v; openTech(); } });
@@ -459,10 +460,10 @@ function setMode(m) {
 
 // ---- powers ----
 function setPower(p) {
-  Game.power = p;
+  Game.power = p; Game.pair = null;
   document.querySelectorAll('#tools [data-p]').forEach(b => b.classList.toggle('on', b.dataset.p === p));
   $('game').classList.toggle('aim', !!p);
-  if (p) toast(isBrush(p) ? 'Drag on the map to paint. Esc cancels.' : 'Click the map to use it. Esc cancels.', 1800);
+  if (p) toast(isBrush(p) ? 'Drag on the map to paint. Esc cancels.' : p === 'ally' || p === 'gift' ? `Click the ${p === 'gift' ? 'town that teaches' : 'first town'}, then the ${p === 'gift' ? 'one that learns' : 'second'}. Esc cancels.` : 'Click the map to use it. Esc cancels.', 2200);
 }
 function nearestTown(i, maxD) {
   let best = null, bd = maxD;
@@ -475,10 +476,11 @@ function climatePatch(i, v) {
 }
 // One click, as many repeats as the toolbar says. Spread out slightly so five tribes don't land on one spot.
 function usePower(p, sx, sy) {
+  if (p === 'ally' || p === 'gift') { pairPower(p, sx, sy); return; }
   const n = Game.n;
   let done = 0;
   for (let k = 0; k < n; k++) {
-    const jitter = (p === 'tribe' || p === 'meteor' || p === 'herd') && k > 0;
+    const jitter = (p === 'tribe' || p === 'meteor' || p === 'herd' || p === 'quake') && k > 0;
     const ox = jitter ? (rnd() - 0.5) * 240 * Render.cam.z * 0.25 : 0, oy = jitter ? (rnd() - 0.5) * 240 * Render.cam.z * 0.25 : 0;
     if (powerOnce(p, sx + ox, sy + oy, k)) done++;
   }
@@ -508,12 +510,54 @@ function powerOnce(p, sx, sy, k) {
       break;
     case 'genius':
       if (!t || !tn(t)) { toast('No settlement close enough.'); return false; }
-      { const c = t.members[rint(t.members.length)]; addTrait(c, 'genius'); plog(c, 'Something changed. The ideas started coming.'); if (Game.n === 1) toast(`${c.name} of ${t.name} is a genius now.`); }
-      break;
-    case 'bless':
+      return makeGenius(t, k);
+    case 'bless': case 'curse':
       if (!t) { toast('No settlement close enough.'); return false; }
-      for (let r = 0; r < R.N; r++) t.stock[r] += Math.max(t.stock[r] * 0.5, wantOf(t, r));
-      t.unrest = 0; t.famine = 0; if (k === 0) toast(`${t.name} prospers.`);
+      if (k > 0) return false;  // once is enough: repeats would only stack the years
+      if (p === 'bless') {
+        for (let r = 0; r < R.N; r++) t.stock[r] += Math.min(Math.max(t.stock[r] * 0.3, wantOf(t, r)), tn(t) * 3);
+        t.unrest = 0; t.famine = 0; giveBoon(t, 'bless', 8);
+        chronT('wonder', `${t.name} is blessed. For years to come its harvests are heavy, its children healthy and its people glad.`, t);
+        toast(`${t.name} is blessed for 8 years.`);
+      } else {
+        giveBoon(t, 'curse', 8); t.unrest = Math.min(100, t.unrest + 15);
+        chronT('collapse', `A curse falls on ${t.name}. Crops wither, children sicken and nobody can say why.`, t);
+        toast(`${t.name} is cursed for 8 years.`);
+      }
+      break;
+    case 'bounty': case 'famine': {
+      if (k > 0) return false;
+      const near = W.towns.filter(o => Math.hypot(o.x - tx(i), o.y - ty(i)) < 45);
+      climatePatch(i, p === 'bounty' ? 1.4 : 0.35);
+      for (const o of near) {
+        giveBoon(o, p === 'bounty' ? 'plenty' : 'want', p === 'bounty' ? 6 : 4);
+        if (p === 'bounty') { o.stock[R.FOOD] += tn(o) * 1.5; o.famine = 0; } else o.stock[R.FOOD] *= 0.4;
+      }
+      const big = near.sort((a, b) => tn(b) - tn(a))[0];
+      if (big) chronT(p === 'bounty' ? 'misc' : 'famine', p === 'bounty' ? `Years of plenty begin around ${big.name}: barns overflow and nobody goes hungry.` : `Blight and rot spread through the stores around ${big.name}. Hard years are coming.`, big);
+      toast(near.length ? `${p === 'bounty' ? 'Years of plenty' : 'Hunger'} for ${near.length} settlement${near.length === 1 ? '' : 's'} here.` : 'Nobody lives close enough to notice.');
+      break;
+    }
+    case 'prophet':
+      if (!t || !t.members.length) { toast('No settlement close enough.'); return false; }
+      return prophet(t, k);
+    case 'hero':
+      if (!t || !t.members.length) { toast('No settlement close enough.'); return false; }
+      return makeHero(t, k);
+    case 'quake': quakeAt(i, k); break;
+    case 'flood': return floodAt(i, k);
+    case 'migrate':
+      if (!t) { toast('No settlement close enough.'); return false; }
+      return migrate(t);
+    case 'golden':
+      if (!t) { toast('No settlement close enough.'); return false; }
+      { const pol = t.polity;
+        if (pol.dAge === 1) { if (k === 0) toast(`${pol.name} is already in a golden age.`); return false; }
+        pol.dAge = 1; pol.dAgeY = Math.floor(year()); pol.dRun = 3;
+        for (const o of W.towns) if (o.polity === pol) recomputeMods(o);
+        const cap0 = pol.capital && pol.capital.alive ? pol.capital : t;
+        chronT('tech', `A golden age of learning dawns in ${pol.name}. Scholars crowd ${cap0.name}, and new ideas come thick and fast.`, cap0);
+        toast(`A golden age for ${pol.name}: faster research and ideas spreading further, for at least 15 years.`); }
       break;
     case 'tribe':
       if (W.water[i] || W.biome[i] === B.SNOW) { if (Game.n === 1) toast('They need dry land to stand on.'); return false; }
@@ -543,6 +587,215 @@ function powerOnce(p, sx, sy, k) {
   return true;
 }
 const ty2 = i => (i / W.w) | 0;
+// ---- the observer's people: a genius, a hero, a prophet ----
+// A young grown-up, one the town would pick (pref) if it has one; if nobody is of age, someone comes of age now.
+function youngAdult(t, pref, skip) {
+  const M = t.members, ok = [], best = [];
+  for (let q = 0; q < M.length; q++) { const p = M[q], a = ageOf(p); if (!p.alive || p.army || p.btl || p.aboard || a < 17 || a > 34 || skip(p)) continue; ok.push(p); if (pref(p)) best.push(p); }
+  if (best.length) return pick(best);
+  if (ok.length) return pick(ok);
+  for (let q = 0; q < M.length; q++) { const p = M[q], a = ageOf(p); if (p.alive && !p.army && !p.btl && !p.aboard && a >= 14 && a < 60 && !skip(p)) ok.push(p); }
+  if (ok.length) return pick(ok);
+  const p = newPerson(t, rint(2), 17 + rnd() * 3);
+  p.ti = p.nt = nearTile(t.i, 3); plog(p, `Came of age in ${t.name}.`);
+  return p;
+}
+const showPerson = (p, msg) => { select('person', p); setFocus(p); if (msg) toast(msg, 3200); };
+function makeGenius(t, k) {
+  const c = youngAdult(t, p => p.job === J.SCHOLAR, p => hasTrait(p, 'genius'));
+  forceTrait(c, 'genius');  // and no longer dull
+  if (c.job !== J.SCHOLAR && c.job > J.ELDER) { t.jobs[c.job]--; c.job = J.SCHOLAR; t.jobs[J.SCHOLAR]++; c.skill = 0; }
+  c.fame += 5; c.gWork = -1;
+  plog(c, 'Something changed. The ideas started coming.');
+  (W.genii || (W.genii = [])).push(c);
+  const T = geniusPick(t);
+  if (T) { c.gWork = T.ix; t.prog[T.ix] += inventCost(t, T) * GENIUS_PUSH; }  // straight to work
+  if (k === 0) chronT('tech', `${c.name} of ${t.name} turns out to have one of the great minds of the age.`, t);
+  if (k === Game.n - 1) showPerson(c, `${c.name}, ${Math.floor(ageOf(c))}, of ${t.name} is a genius${T ? ' and is already at work on ' + T.name : ''}.`);
+  return true;
+}
+function makeHero(t, k) {
+  const p = youngAdult(t, q => q.job === J.SOLDIER || hasTrait(q, 'brave'), q => q.fame >= 25);
+  for (const id of ['brave', 'charismatic', pick(['strong', 'tough', 'swift']), pick(['warlike', 'wise', 'kind', 'ambitious'])]) forceTrait(p, id);
+  p.fame += 25; p.xp = Math.max(p.xp || 0, 40);
+  plog(p, 'Marked out for greatness: fearless, and followed without question.');
+  const war = Object.keys(t.polity.warsWith).length > 0;
+  if (k === 0) chronT('gov', `${p.name} comes of age in ${t.name}: fearless, quick to lead, and followed without question.${war ? ' The war has found its general.' : ''}`, t);
+  if (k === Game.n - 1) showPerson(p, `A hero rises in ${t.name}: ${p.name}.`);
+  return true;
+}
+// Founds a faith where there is none; otherwise fires up the one there and carries it to the towns around.
+function prophet(t, k) {
+  if (k > 0) return false;
+  const p = youngAdult(t, q => q.job === J.SERVICE || hasTrait(q, 'pious'), () => false);
+  forceTrait(p, 'pious'); forceTrait(p, 'charismatic'); p.fame += 12;
+  let F = t.faith >= 0 && W.faiths ? W.faiths[t.faith] : null;
+  const fresh = !F;
+  if (fresh) { F = newFaith(t, null); t.faith = F.id; F.founder = p.name; plog(p, `Founded the worship of ${F.kind}.`); }
+  else { F.fervor = Math.min(1.5, (F.fervor || 1) + 0.25); plog(p, `Preached ${F.name} through the country round ${t.name}.`); }
+  recomputeMods(t);
+  let won = 0;
+  for (const o of W.towns) {
+    if (o === t || o.faith === F.id) continue;
+    const d = Math.hypot(o.x - t.x, o.y - t.y);
+    if (d < 55 && rnd() < (o.faith < 0 ? 0.8 : 0.5) * (1 - d / 70)) { o.faith = F.id; recomputeMods(o); won++; }
+  }
+  chronT('gov', fresh ? `In ${t.name}, ${p.name} has a vision and teaches a new faith: ${F.name}, the way of ${F.kind}.${won ? ` ${won} town${won === 1 ? '' : 's'} nearby take${won === 1 ? 's' : ''} it up.` : ''}` : `The prophet ${p.name} preaches ${F.name} in ${t.name}${won ? `, and ${won} town${won === 1 ? '' : 's'} round about turn${won === 1 ? 's' : ''} to it` : ''}.`, t);
+  showPerson(p, fresh ? `${p.name} founds ${F.name}.` : `${p.name} preaches ${F.name}${won ? ': ' + won + ' towns convert' : ''}.`);
+  return true;
+}
+// ---- the observer's disasters, aimed (life.js has the ones that come on their own) ----
+const crowdLoss = (t, f) => { if (t.alive && t.folk > 0) { const d = Math.floor(t.folk * f); t.folk -= d; W.folkN -= d; t.scale = tn(t) / Math.max(1, t.members.length); return d; } return 0; };
+function quakeAt(i, k) {
+  const x = tx(i), y = ty(i), r = 9 + rint(6), SE = TECH_IX.seismic;
+  let wrecked = 0, dead = 0, worst = null;
+  for (const t of W.towns.slice()) {
+    const d = Math.hypot(t.x - x, t.y - y);
+    if (d > r + t.radius * 0.6) continue;
+    const f = clamp(1 - d / (r + t.radius), 0.15, 1) * (t.tech[TECH_IX.engineering] ? 0.7 : 1) * (SE !== undefined && t.tech[SE] ? 0.3 : t.tech[TECH_IX.skyscrapers] ? 0.5 : 1);
+    for (const b of t.blds.slice()) if (b.type !== 'hearth' && !b.ruin && rnd() < 0.08 * f) { if (FXH) FXH.rubble(b.x, b.y, 2); removeBuilding(b); wrecked++; }
+    const go = Math.floor(t.members.length * 0.025 * f);
+    for (let q = 0; q < go && t.alive; q++) { const v = t.members[rint(t.members.length)]; if (v) { killPerson(v, 'killed in an earthquake'); dead++; } }
+    dead += crowdLoss(t, 0.025 * f);
+    if (t.alive) { t.unrest = Math.min(100, t.unrest + 10); if (!worst || tn(t) > tn(worst)) worst = t; }
+  }
+  for (let dy = -r; dy <= r; dy += 2) for (let dx = -r; dx <= r; dx += 2) { const j = (y + dy) * W.w + x + dx; if (j > 0 && j < W.tree.length && W.tree[j] && dx * dx + dy * dy < r * r && rnd() < 0.3) { W.tree[j] = W.tree[j] >> 1; dirty(j); } }
+  W.fights = W.fights || []; W.fights.push({ x, y, t: W.tick });
+  if (worst) chronT('collapse', `The earth shakes under ${worst.name}. ${wrecked} buildings are down and ${dead} are dead.`, worst);
+  else chron('misc', 'The earth shakes in empty country.', x, y);
+  if (k === 0) toast(worst ? `${wrecked} buildings down, ${dead} dead.` : 'The ground shakes. Nobody lives close enough to be hurt.');
+}
+// A river bursts its banks or the sea comes in: low ground near the water goes under for a season, fields drown, weak houses go,
+// and the mud left behind is rich. The water lies over the land as a storm surge does (life.js surgesTick drains it).
+function floodAt(i, k) {
+  const x0 = tx(i), y0 = ty(i), R0 = 10, w = W.w, flood = new Set(), dep = new Map(), q = [];
+  for (let dy = -R0; dy <= R0; dy++) for (let dx = -R0; dx <= R0; dx++) {
+    const x = x0 + dx, y = y0 + dy;
+    if (dx * dx + dy * dy > R0 * R0 || x < 1 || y < 1 || x >= w - 1 || y >= W.h - 1) continue;
+    const j = y * w + x;
+    if ((W.water[j] && W.water[j] !== 3) || W.river[j]) { q.push(j); dep.set(j, 0); if (!W.water[j]) flood.add(j); }
+  }
+  if (!q.length) { if (k === 0) toast('A flood needs a river or a coast close by.'); return false; }
+  for (let h = 0; h < q.length; h++) {
+    const j = q[h], d = dep.get(j);
+    if (d >= 4) continue;
+    for (const n of [j - 1, j + 1, j - w, j + w]) {
+      if (n < 0 || n >= W.water.length || dep.has(n) || W.water[n] || W.elev[n] > 0.3) continue;
+      const dx = n % w - x0, dy = ((n / w) | 0) - y0;
+      if (dx * dx + dy * dy > (R0 + 3) * (R0 + 3)) continue;
+      dep.set(n, d + 1); flood.add(n); q.push(n);
+    }
+  }
+  if (!flood.size) { if (k === 0) toast('The banks here are too high to flood.'); return false; }
+  let crops = 0, houses = 0, dead = 0, worst = null;
+  for (const j of flood) { if (W.occ[j] === 2 && W.stage[j]) { W.stage[j] = 0; crops++; } W.fert[j] = Math.min(255, W.fert[j] + 12); W.plant[j] = 0; dirty(j); }
+  for (const t of W.towns.slice()) {
+    if (Math.hypot(t.x - x0, t.y - y0) > R0 + t.radius) continue;
+    let hit = 0;
+    for (const b of t.blds.slice()) { if (b.type === 'hearth' || b.ruin || !flood.has(b.i)) continue; hit++; if (rnd() < (b.type === 'house' && b.tier <= 4 ? 0.45 : 0.08)) { removeBuilding(b); if (b.type === 'house') houses++; } }
+    for (const p of t.members.slice()) if (p.alive && flood.has(p.ti) && rnd() < 0.08) { killPerson(p, 'drowned in a flood'); dead++; }
+    if (!t.alive || !hit) continue;
+    dead += crowdLoss(t, 0.03 * hit / Math.max(1, t.blds.length));
+    t.stock[R.FOOD] *= 0.8;
+    if (!worst || tn(t) > tn(worst)) worst = t;
+  }
+  (W.surges || (W.surges = [])).push({ tiles: [...flood], until: W.tick + Math.round(TPY * (0.25 + rnd() * 0.15)) });
+  const parts = [houses && `${houses} houses swept away`, dead && `${dead} drowned`, crops && `${crops} fields under water`].filter(Boolean);
+  if (worst) chronT('misc', `Floodwater pours over the low ground at ${worst.name}${parts.length ? ': ' + parts.join(', ') : ''}. The mud it leaves will be rich.`, worst);
+  if (k === 0) toast(parts.length ? cap(parts.join(', ')) + '.' : 'The water rises over empty ground.');
+  return true;
+}
+// A large party sets out to find new land, through the same founding as any colony (society.js tryColonize), pushed to go now.
+function migrate(t) {
+  if (tn(t) < 16 || t.members.length < 8) { toast(`${t.name} is too small to spare a party of settlers.`); return false; }
+  const n0 = W.towns.length, cp = colonyPush, fs0 = findSite, was = t.moved, why = t.pushWhy, since = t.sinceColony;
+  colonyPush = () => 2; t.moved = -999; t.sinceColony = 0;
+  try {
+    for (let q = 0; q < 6 && W.towns.length === n0; q++) {
+      t.pushWhy = q < 2 ? '' : 'land';
+      if (q >= 3) findSite = (o, mn, mx) => fs0(o, mn, Math.max(mx, 110), true);  // a full world: they take poorer land, further off
+      nodeBudget = Math.max(nodeBudget, 30000);
+      tryColonize(t);
+    }
+  } finally { colonyPush = cp; findSite = fs0; t.pushWhy = why; if (W.towns.length === n0) { t.moved = was; t.sinceColony = since; } }
+  const nt = W.towns.length > n0 ? W.towns[W.towns.length - 1] : null;
+  if (!nt) { toast(`The people of ${t.name} find nowhere to go. They stay.`); return false; }
+  // the founding code sends a village's worth; this was meant to be a great trek, so more follow on foot when they can
+  if (W.landId[nt.i] === W.landId[t.i]) {
+    const more = Math.min(30, Math.floor(t.members.length * 0.12));
+    for (let q = 0, moved = 0; q < t.members.length * 2 && moved < more && t.members.length > 8; q++) {
+      const p = t.members[rint(t.members.length)];
+      if (!p || p.army || p.btl || p.aboard || p.leader || ageOf(p) < 15 || ageOf(p) > 55) continue;
+      moveTo(p, nt); startMigrate(p, nearTile(nt.i, 3)); moved++;
+    }
+    planJobs(t); planJobs(nt);
+  }
+  const lead = nt.members.find(p => p.alive && !p.hidden) || nt.members[0];
+  if (lead) showPerson(lead, `${tn(nt)} people leave ${t.name} to found ${nt.name}.`); else toast(`Settlers leave ${t.name} to found ${nt.name}.`);
+  return true;
+}
+// ---- powers that join two towns: click the first, then the second ----
+function pairPower(p, sx, sy) {
+  const i = screenToTile(sx, sy), t = i >= 0 ? nearestTown(i, 40) : null;
+  if (!t) { toast('No settlement close enough.'); return; }
+  const a = Game.pair && Game.pair.alive ? Game.pair : null;
+  if (!a) { Game.pair = t; select('town', t); toast(p === 'gift' ? `${t.name} will teach. Now click the town that learns.` : `${t.name} chosen. Now click a town of the other realm.`, 2600); return; }
+  if (t === a) { toast('Pick a different town.'); return; }
+  const ok = p === 'ally' ? allyPower(a, t) : giftPower(a, t);
+  Game.pair = null;
+  if (ok && !Game.keep) setPower(null);
+}
+function allyPower(a, b) {
+  const A = a.polity, B = b.polity;
+  if (A === B) { toast('Those two towns are in the same realm.'); return false; }
+  if (areAllies(A, B)) { toast(`${A.name} and ${B.name} are already allies.`); return false; }
+  if (atWar(A, B)) endWar(A.warsWith[B.id], null, 'treaty');
+  A.known[B.id] = 1; B.known[A.id] = 1;
+  adjustRel(A, B, 40);
+  makeAlliance(A, B);
+  if (A.pop + B.pop < 60) chronT('gov', `${A.name} and ${B.name} swear an alliance.`, a);
+  toast(`${A.name} and ${B.name} are now allies.`);
+  return true;
+}
+// The second town learns what the first knows and it is ready for: the most advanced first, as many as the toolbar's repeat says.
+function giftPower(a, b) {
+  const got = [];
+  for (let q = 0; q < Game.n; q++) {
+    let best = -1, bs = -1;
+    for (const ix of techCache(a).known) { if (b.tech[ix] || !a.tech[ix] || !eligible(b, TECHS[ix])) continue; const T = TECHS[ix], s = T.era * 10 + (T.side ? 0 : 5) + rnd(); if (s > bs) { bs = s; best = ix; } }
+    if (best < 0) break;
+    learn(b, best);
+    const T = TECHS[best];
+    if (!b.polity.firsts[T.id]) b.polity.firsts[T.id] = Math.floor(year());
+    got.push(T.name);
+  }
+  if (!got.length) { toast(`${a.name} knows nothing that ${b.name} is ready to learn.`); return false; }
+  chronT('tech', `Travellers from ${a.name} teach ${b.name} ${got.length === 1 ? got[0] : got.length + ' new things, ' + got.slice(0, 3).join(', ') + (got.length > 3 ? ' and more' : '')}.`, b);
+  toast(`${b.name} learns ${got.slice(0, 3).join(', ')}${got.length > 3 ? ` and ${got.length - 3} more` : ''} from ${a.name}.`);
+  select('town', b);
+  return true;
+}
+// A soft light over a blessed town, a shadow over a cursed one, a faint tint for years of plenty or want: one gradient a town, only on screen.
+const BOON_RGB = { bless: '255,224,140', curse: '70,40,100', plenty: '150,220,120', want: '150,100,60' };
+function drawBoons(ctx, c, z, vw, vh) {
+  const yr = Math.floor(year()), pulse = 0.85 + Math.sin(performance.now() / 700) * 0.15;
+  let any = false;
+  for (const t of W.towns) {
+    const b = t.boon;
+    if (!b) continue;
+    const k = b.bless >= yr ? 'bless' : b.curse >= yr ? 'curse' : b.plenty >= yr ? 'plenty' : b.want >= yr ? 'want' : null;
+    if (!k) continue;
+    const sx = ((t.x + 0.5) * TS - c.x) * z, sy = ((t.y + 0.5) * TS - c.y) * z, r = Math.max(14, (t.radius || 13) * 0.9 * TS * z);
+    if (sx + r < 0 || sy + r < 0 || sx - r > vw || sy - r > vh) continue;
+    const big = k === 'bless' || k === 'curse', a = (big ? 0.26 : 0.13) * pulse, col = BOON_RGB[k];
+    const g = ctx.createRadialGradient(sx, sy, r * 0.1, sx, sy, r);
+    g.addColorStop(0, `rgba(${col},${a})`); g.addColorStop(0.6, `rgba(${col},${a * 0.55})`); g.addColorStop(1, `rgba(${col},0)`);
+    ctx.globalCompositeOperation = k === 'curse' || k === 'want' ? 'source-over' : 'lighter'; any = true;
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx, sy, r, 0, 6.283); ctx.fill();
+    if (big) { ctx.strokeStyle = `rgba(${col},${0.3 * pulse})`; ctx.lineWidth = Math.max(1, z * 0.8); ctx.beginPath(); ctx.arc(sx, sy, r * 0.72, 0, 6.283); ctx.stroke(); }
+  }
+  if (any) ctx.globalCompositeOperation = 'source-over';
+}
 // ---- reshaping the world: drag to paint land, deposits and soil ----
 const isBrush = p => /^(b_|o_|c_|s_)/.test(p);
 const BRUSH_BIOME = { grass: B.GRASS, forest: B.FOREST, jungle: B.JUNGLE, steppe: B.STEPPE, desert: B.DESERT, tundra: B.TUNDRA, marsh: B.MARSH, rock: B.ROCK, snow: B.SNOW };

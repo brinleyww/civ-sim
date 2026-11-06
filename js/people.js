@@ -82,7 +82,7 @@ function beginPath(p, path) {
 }
 function stepNeed(p, a, b) {
   let c;
-  if (W.water[b]) c = SAIL_COST;
+  if (W.water[b]) c = p.boat || p.sea ? SAIL_COST : W.ice[b] >= ICE_WALK ? ICE_COST : 30;  // on foot: over the ice, or wading and swimming for the shore
   else {
     const lv = W.road[b], t = p.town, tr = t.trans;
     c = W.cost[b];
@@ -101,11 +101,45 @@ function stepNeed(p, a, b) {
   const diff = b - a;
   return (diff === 1 || diff === -1 || diff === W.w || diff === -W.w) ? c : c * 1.414;
 }
+// The ice under a walker has gone soft: they make for the nearest shore, and now and then one of them goes through.
+function thinIce(p, i) {
+  const v = W.ice[i];
+  if (v > 0 && rnd() < (v < 80 ? 0.04 : 0.005)) {
+    const t = p.town, notable = p.leader || p.fame >= 25;
+    p.st = 0; killPerson(p, 'fell through the ice');
+    if (notable && t.alive) chronT('misc', `${p.name} of ${t.name} falls through the ice and drowns.`, t);
+    return true;
+  }
+  // already on the way back to dry ground: just keep going
+  const P0 = p.path;
+  if (p.st === 1 && P0 && P0.length && !W.water[P0[P0.length - 1]] && P0.length - p.pi <= 10) return false;
+  const sh = shoreNear(i);
+  if (sh < 0) return false;
+  const w = W.w, ax = i % w, ay = (i / w) | 0, dx = sh % w - ax, dy = ((sh / w) | 0) - ay, n = Math.max(Math.abs(dx), Math.abs(dy));
+  const path = new Int32Array(n + 1);
+  for (let k = 0; k <= n; k++) path[k] = Math.round(ay + dy * k / n) * w + Math.round(ax + dx * k / n);
+  if (!p.army) { if (p.task === T_MIGRATE) p.step = 0; else endTask(p); }  // a soldier's own orders bring them back into line once ashore
+  beginPath(p, path);
+  return true;
+}
+// The nearest dry, open ground to a tile out on the water, a ring at a time (-1: none within 9).
+function shoreNear(i) {
+  const w = W.w, x = i % w, y = (i / w) | 0;
+  for (let r = 1; r <= 9; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+    const nx = x + dx, ny = y + dy;
+    if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= W.h - 1) continue;
+    const j = ny * w + nx;
+    if (!W.water[j] && W.occ[j] !== 1 && W.occ[j] !== 3) return j;
+  }
+  return -1;
+}
 const ROAD_NEXT = [80, 300, 1000, 3000, 1e9];
 function stepTile(p) {
   p.mv -= p.need;
   const i = p.nt; p.ti = i; p.pi++;
   if (W.water[i] === 0) wearTile(i, p.town);
+  else if (!p.boat && !p.sea && !p.aboard && W.ice[i] < ICE_WALK && thinIce(p, i)) return;  // (sea: out in a boat)
   if (p.pi >= p.path.length - 1) { p.st = 0; p.wake = W.tick; p.mv = 0; p.nt = i; return; }
   p.nt = p.path[p.pi + 1];
   p.need = stepNeed(p, i, p.nt);
@@ -125,7 +159,8 @@ function quietWalk(p, to) {
   const dx = Math.abs(bx - ax), dy = Math.abs(by - ay), n = dx > dy ? dx : dy;
   if (n < 1) return false;
   // not straight across a bay or a lake: the way round is far longer, and anyone glancing over would see them walk on water
-  for (let k = 1; k < n; k++) if (W.water[Math.round(ay + (by - ay) * k / n) * w + Math.round(ax + (bx - ax) * k / n)]) return false;
+  // (thick ice will do: nobody watches a glide, so only ice that will surely hold)
+  for (let k = 1; k < n; k++) { const j = Math.round(ay + (by - ay) * k / n) * w + Math.round(ax + (bx - ax) * k / n); if (W.water[j] && !(ICE_N > 0 && W.ice[j] >= ICE_SAFE)) return false; }
   // the going rate, from ground sampled along the way; the doorways at either end don't count, or every walk home or to the store is timed as if through walls
   let sum = 0, cnt = 0;
   const S = Math.min(n, 7), at = k => Math.round(ay + (by - ay) * k / n) * w + Math.round(ax + (bx - ax) * k / n);
@@ -159,7 +194,7 @@ function settle(p) {
   // a doorway is fine (a walk can start inside a building); open water or a wall is not, so the nearest ground beside it
   // mid-lake (a quiet walk goes straight over water), they turn back to the last dry ground on the way
   let j = c;
-  if (W.water[j] || W.occ[j] === 3) {
+  if (!footOK(j) || W.occ[j] === 3) {
     j = -1;
     const w = W.w, a = P0[0], b = P0[1], ax = a % w, ay = (a / w) | 0, n = Math.max(Math.abs(b % w - ax), Math.abs(((b / w) | 0) - ay)), f0 = Math.min(1, mv0 / p.need);
     for (let k = Math.floor(f0 * n); k > 0 && j < 0; k--) { const i = Math.round(ay + (((b / w) | 0) - ay) * k / n) * w + Math.round(ax + (b % w - ax) * k / n); if (!W.water[i] && W.occ[i] !== 3) j = i; }
@@ -219,7 +254,7 @@ function walk(p, to, nextStep, mode) {
   const again = p.pw === to && p.pwAt === p.ti;
   if (again && nodeBudget <= 0) { p.wake = W.tick + 1 + rint(4); return; }
   p.pw = -1;
-  if (!again && !mode && !inView(p.ti) && !inView(to) && !p.town.attack && !W.water[p.ti] && !W.water[to] && W.landId[p.ti] === W.landId[to] && quietWalk(p, to)) { p.step = nextStep; p.hidden = false; return; }
+  if (!again && !mode && !inView(p.ti) && !inView(to) && !p.town.attack && !W.water[p.ti] && !W.water[to] && (W.landId[p.ti] === W.landId[to] || iceJoined(W.landId[p.ti], W.landId[to])) && quietWalk(p, to)) { p.step = nextStep; p.hidden = false; return; }
   // short trips across open ground need no search at all: most of a day's walking is next door
   if (!again && !mode && straightWalk(p, to)) { p.step = nextStep; p.hidden = false; return; }
   const cls = mode ? 0 : p.town.trans + (p.town.mod.rail ? 8 : 0);
@@ -342,6 +377,7 @@ const hasTree = i => W.tree[i] > 0;
 const hasRock = i => W.oreAmt[i] > 0;
 const hasFishLand = i => { if (W.river[i] && W.fish[i] > 0) return true; for (let k = 0; k < 4; k++) if (W.fish[i + NB_D[k]] > 0) return true; return false; };
 const hasFish = i => W.fish[i] > 0;
+const iceFish = i => W.fish[i] > 0 && W.ice[i] >= ICE_SAFE;
 // The long swings (droughts called down, wet decades) times this season's real weather.
 const rainAt = i => { const cx = Math.floor((i % W.w) / W.w * 10), cy = Math.floor(((i / W.w) | 0) / W.h * 10); return W.climate[cy * 10 + cx] * wxRain(i); };
 
@@ -433,6 +469,8 @@ function gatherStep(p) {
         // boats go out from a wharf or harbour; without one, you fish from the bank
         // and only in a boat the town really has, taken from where it is kept
         if (m.sail >= 1 && t.sBoat.length && t.portLv && rnd() < 0.65 && portOf(t) >= 0 && takeBoat(p)) { to = siteNear(t.sBoat, p, hasFish); mode = 1; if (to < 0) returnBoat(p); }
+        // in a hard winter they walk out on the lake and fish through a hole in the ice (the careful only where it's thick)
+        if (to < 0 && ICE_N > 0 && t.sBoat.length && rnd() < 0.5) to = siteNear(t.sBoat, p, iceFish);
         if (to < 0) { to = siteNear(t.sFish, p, hasFishLand); mode = 0; }
         break;
       case J.MINE: {
@@ -459,9 +497,9 @@ function gatherStep(p) {
     workFor(p, dur, 2, j === J.MINE);
     return;
   }
-  if (p.step === 2) { harvest(p, j); p.hidden = false; p.step = 5; }
+  if (p.step === 2) { if (!p.sea && W.water[p.ti] && W.ice[p.ti] < ICE_WALK && thinIce(p, p.ti)) return; harvest(p, j); p.hidden = false; p.step = 5; }
   if (p.step === 5) {  // home with the load (again, if the search was busy: the harvest is in hand already)
-    if (W.water[p.ti]) { const bs = boatStore(t), back = bs ? bs.i : t.portLv && portOf(t) >= 0 ? t.portB : depotFor(p); walk(p, back, 3, 1); }
+    if (W.water[p.ti] && p.sea) { const bs = boatStore(t), back = bs ? bs.i : t.portLv && portOf(t) >= 0 ? t.portB : depotFor(p); walk(p, back, 3, 1); }
     else walk(p, depotFor(p), 3, 0);
     return;
   }
@@ -672,7 +710,7 @@ function stalk(p, H) {
   const d = Math.max(0.01, Math.hypot(H.x - x, H.y - y));
   const tx0 = Math.round(H.x + (x - H.x) / d * Math.min(r, d)), ty0 = Math.round(H.y + (y - H.y) / d * Math.min(r, d));
   const to = clamp(ty0, 1, W.h - 2) * W.w + clamp(tx0, 1, W.w - 2);
-  if (W.water[to] || W.landId[to] !== W.landId[p.ti]) { endHunt(p); return; }
+  if (W.water[to] ? !footOK(to) : W.landId[to] !== W.landId[p.ti] && !W.water[p.ti] && !iceJoined(W.landId[to], W.landId[p.ti])) { endHunt(p); return; }  // after it over the ice, if it holds
   walk(p, to, 1, 0);
 }
 function endHunt(p) { p.obj = null; didWork(p, J.HUNT); if (p.carry > 0) { p.task = T_HUNT; p.step = 5; walk(p, depotFor(p), 6, 0); return; } endTask(p, 10); }
@@ -1229,6 +1267,12 @@ function herdsTick() {
   for (let k = H.length - 1; k >= 0; k--) {
     const h = H[k];
     if (h.n <= 0) { H[k] = H[H.length - 1]; H.pop(); if (h.owner && h.owner.tameHerd === h) h.owner.tameHerd = null; continue; }
+    // herds cross the ice too; caught out on it at the thaw, they make for the shore and lose a beast or two to the water
+    const here = (h.y | 0) * W.w + (h.x | 0), soft = W.water[here] !== 0 && W.ice[here] < ICE_WALK;
+    if (soft) {
+      if (W.ice[here] > 0 && W.ice[here] < 80 && rnd() < 0.04) h.n--;
+      if (W.water[(h.ty | 0) * W.w + (h.tx | 0)]) { const s = shoreNear(here); if (s >= 0) { h.tx = s % W.w + 0.5; h.ty = ((s / W.w) | 0) + 0.5; } }
+    }
     const dx = h.tx - h.x, dy = h.ty - h.y, d = Math.sqrt(dx * dx + dy * dy);
     if (HERD_TYPES[h.type].pred) predatorAct(h);
     if (h.n <= 0) continue;
@@ -1237,12 +1281,12 @@ function herdsTick() {
       else { h.tx = h.x + (rnd() - 0.5) * 24; h.ty = h.y + (rnd() - 0.5) * 24; }
       h.tx = clamp(h.tx, 2, W.w - 3); h.ty = clamp(h.ty, 2, W.h - 3);
       const i = (h.ty | 0) * W.w + (h.tx | 0);
-      if (W.water[i] || W.biome[i] === B.SNOW) { h.tx = h.x; h.ty = h.y; }
+      if (!footOK(i) || W.biome[i] === B.SNOW) { h.tx = h.x; h.ty = h.y; }
       continue;
     }
     const run = h.flee > W.tick ? 1.5 : HERD_TYPES[h.type].pred ? 0.4 : 0.25;
     const nx = h.x + dx / d * run, ny = h.y + dy / d * run;
-    if (W.water[(ny | 0) * W.w + (nx | 0)]) { h.tx = h.x; h.ty = h.y; continue; }
+    if (!soft && !footOK((ny | 0) * W.w + (nx | 0))) { h.tx = h.x; h.ty = h.y; continue; }
     h.x = nx; h.y = ny;
   }
   // carcasses lie where they fell until someone butchers them or the birds finish
@@ -1260,6 +1304,81 @@ function herdsYear() {
       W.herds.push({ id: W.nextId++, x: h.x, y: h.y, type: h.type, n: h.n, tx: h.x + (rnd() - 0.5) * 30, ty: h.y + (rnd() - 0.5) * 30, owner: null });
     }
   }
+}
+
+// ---- wanderers who stop: a big party out on empty land may settle where it stands ----
+// Travellers on the road, soldiers walking home from a broken army: if enough of them are out on land nobody holds, far from where they
+// were going, and a good spot is near, they may stop and build there. Close to home and content, it's a new village of their realm;
+// angry, or too far for the crown to reach, it's a people of its own. A few dozen are far likelier to stop than a handful.
+const _wg = new Map();
+function wanderersCheck() {
+  const P = W.people, w = W.w, G = _wg, yr = year();
+  G.clear();
+  for (let k = 0; k < P.length; k++) {
+    const p = P[k];
+    if ((p.task !== T_MIGRATE && p.task !== T_RETURN) || p.army || p.aboard || p.leader || p.btl || p.boat) continue;
+    const t = p.town;
+    if (!t.alive || t.nomad || t.founded > yr - 3) continue;  // settlers bound for a new village already know where they're going
+    const i = p.st === 1 && p.path.length === 2 ? glideTile(p) : p.ti, x = i % w, y = (i / w) | 0, dx = x - t.x, dy = y - t.y;
+    if (dx * dx + dy * dy < 500 || W.water[i] || W.owner[i] >= 0) continue;
+    const key = t.id * 65536 + (y >> 4) * 256 + (x >> 4);
+    let g = G.get(key);
+    if (!g) G.set(key, g = { t, list: [], sx: 0, sy: 0, sol: 0 });
+    g.list.push(p); g.sx += x; g.sy += y; if (p.task === T_RETURN) g.sol++;
+  }
+  for (const g of G.values()) {
+    const n = g.list.length, sol = g.sol > n * 0.5;
+    if (n < 12 || rnd() > clamp((n - 10) * 0.012, 0, 0.4) * (sol ? 1.6 : 1)) continue;  // a band of soldiers is used to orders and to camp
+    const site = wanderSite(g.t, Math.round(g.sx / n), Math.round(g.sy / n));
+    if (site >= 0) wanderersFound(g.list.filter(p => W.landId[p.ti] === W.landId[site]), g.t, site, sol ? 'soldiers' : 'travellers', false);
+  }
+}
+// A good place close by: water, food and room, on land nobody holds and not on top of anyone (-1: nowhere good enough to stop for).
+function wanderSite(t, cx, cy) {
+  let best = -1, bs = 1;
+  for (let q = 0; q < 24; q++) {
+    const a = rnd() * 6.283, d = rnd() * 9, x = Math.round(cx + Math.cos(a) * d), y = Math.round(cy + Math.sin(a) * d);
+    if (x < 4 || y < 4 || x >= W.w - 4 || y >= W.h - 4) continue;
+    const i = y * W.w + x, b = W.biome[i];
+    if (W.water[i] || W.river[i] || W.occ[i] || W.road[i] >= 2 || W.owner[i] >= 0 || b === B.ROCK || b === B.SNOW || slopeAt(i) > 0.14) continue;
+    let near = false;
+    for (const o of W.towns) { const ex = o.x - x, ey = o.y - y; if (ex * ex + ey * ey < 225) { near = true; break; } }
+    if (near) continue;
+    const s = siteScore(t, i, false, null) + rnd();
+    if (s > bs) { bs = s; best = i; }
+  }
+  return best;
+}
+// They found it: houses, fields and the ordinary jobs of a village. kind: 'soldiers', 'travellers' or 'exiles'.
+function wanderersFound(list, home, site, kind, angry0) {
+  const n = list.length;
+  if (n < 10 || n >= home.members.length - 3) return null;  // never the whole of a town
+  const pol0 = home.polity, cap0 = pol0.capital && pol0.capital.alive ? pol0.capital : home, yr = year();
+  const reach = 24 + govSt(pol0) * 7 + cap0.mod.admin * 0.45 + (knows(cap0, 'writing') ? 14 : 0) + (cap0.mod.speed - 1) * 60 + (cap0.trans || 0) * 4;
+  const far = Math.hypot(tx(site) - cap0.x, ty(site) - cap0.y) > reach * 1.2;
+  const angry = angry0 || home.unrest > 40 || home.famine > 0 || pol0.stab < 30;
+  let pol = pol0, culture = home.culture;
+  if (angry || far) {
+    if (rnd() < 0.4) culture = makeCulture(home.culture);
+    pol = newPolity(culture);
+    pol.crops = pol0.crops.slice(); pol.known[pol0.id] = 1; pol0.known[pol.id] = 1; pol.gov = GOV_IX.tribe;
+    adjustRel(pol0, pol, angry ? -25 : 20);
+  }
+  const nt = newTown(pol, culture, site, false);
+  nt.tech.set(home.tech); nt.prog.set(home.prog); techDirty(nt); recomputeMods(nt); nt.crop = home.crop;
+  if (!nt.crop && knows(nt, 'agriculture')) settleCrop(nt);
+  nt.radius = 13; nt.moved = nt.sinceColony = yr;
+  if (kind === 'exiles') nt.faith = home.faith;
+  scanTown(nt);
+  nt.stock[R.FOOD] += n * 5; nt.stock[R.WOOD] += 10;  // what they carried, and what they found on the way
+  for (const p of list) { moveTo(p, nt); startMigrate(p, nearTile(site, 3)); if (p.job === J.SOLDIER || p.job === J.NONE) p.job = J.WOOD; }
+  // each of them may stand for a crowd who came too
+  if (home.folk > 0 && home.scale > 1.05) { const extra = Math.min(home.folk, Math.round(n * (home.scale - 1))); home.folk -= extra; nt.folk += extra; nt.scale = tn(nt) / Math.max(1, nt.members.length); home.scale = tn(home) / Math.max(1, home.members.length); }
+  planJobs(home); planJobs(nt);
+  const who = kind === 'soldiers' ? `soldiers of ${home.name}, walking home from the wars,` : kind === 'exiles' ? `exiles driven out of ${home.name}` : `travellers bound for ${home.name}`;
+  const why = pol === pol0 ? '' : angry ? ` They want nothing more to do with the ${polityTitle(pol0)}.` : ' So far from home, they answer to nobody.';
+  chronT('found', `${n} ${who} stop on open land and found ${nt.name}.${why}`, nt);
+  return nt;
 }
 
 // ---- rail and air ----
@@ -1576,6 +1695,8 @@ function stepWorld() {
   if (tick % WX_EVERY === 0) weatherTick();
   ecologySweep();
   snowSweep();
+  iceTick();  // walkable ice: the path cache after a thaw, and which shores it joins (core.js)
+  if (tick % 40 === 23) wanderersCheck();
   if (W.storms.length || tick % 30 === 0) stormsTick();
   if (W.surges && W.surges.length) surgesTick();
   if (W.burning.length || W.swarms.length || W.cyclones.length || (W.clim.ash > 0 && tick % TPY === 0)) disastersTick();

@@ -520,6 +520,7 @@ function drawWorld(dt) {
   drawPlanes(ctx, c, z);
   drawHelis(ctx, c, z);
   drawRockets(ctx, c, z);
+  if (typeof drawBoons === 'function') drawBoons(ctx, c, z, vw, vh);  // blessed and cursed towns glow (main.js)
   drawSelection(ctx, c, z);
   drawTopFX(ctx, c, z, dt);
   drawBattles(ctx, c, z);

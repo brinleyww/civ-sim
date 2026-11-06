@@ -20,7 +20,7 @@ const TRAITS = [
 
   { id: 'clever', name: 'Clever', kind: 'mind', rare: 8, wis: 1.5, opp: 'dull', ideas: { lore: 0.5, math: 0.5 }, col: '#9fb9ee', about: 'Quick to see how things work.' },
   { id: 'dull', name: 'Dull', kind: 'mind', rare: 5, wis: 0.5, opp: 'clever', col: '#9a8f80', about: 'Does as they did yesterday.' },
-  { id: 'genius', name: 'Genius', kind: 'mind', rare: 0.5, wis: 5, ideas: { lore: 4, math: 4, machine: 3, elec: 3, med: 2, sky: 2 }, opp: 'dull', col: '#ffe28a', about: 'Comes along once in a generation. Ideas pour out.' },
+  { id: 'genius', name: 'Genius', kind: 'mind', rare: 0.5, wis: 5, ideas: { lore: 4, math: 4, machine: 3, elec: 3, med: 2, sky: 2 }, opp: 'dull', job: J.SCHOLAR, jobM: 1.25, col: '#ffe28a', about: 'Comes along once in a generation. Ideas pour out.' },
   { id: 'curious', name: 'Curious', kind: 'mind', rare: 9, wis: 1.25, ideas: { nature: 0.5, sea: 0.3, sky: 0.3 }, col: '#9fb9ee', about: 'Asks why, and goes to look.' },
   { id: 'wise', name: 'Wise', kind: 'mind', rare: 4, lead: 1.3, wis: 1.2, ideas: { law: 1 }, col: '#9fb9ee', about: 'People come for advice.' },
 
@@ -102,6 +102,7 @@ function applyTraits(p) {
     if (T.job && T.jobM > jbM) { jb = T.job; jbM = T.jobM; }
   }
   p.hpMax = Math.round(100 * hp); p.str = str; p.spdM = spd; p.lifeM = life; p.fertM = fert; p.sickM = sick; p.workM = work; p.wisM = wis; p.moraleM = morale; p.leadM = lead; p.warM = war; p.aimM = aim; p.jb = jb; p.jbM = jbM;
+  if (p.statOv) for (const k in p.statOv) p[k] = p.statOv[k];  // what the player set in the person editor wins
 }
 function addTrait(p, id) {
   const k = TRAIT_IX[id];
@@ -112,3 +113,86 @@ function addTrait(p, id) {
 }
 // How much a worker gets done: their build, their temper, and any knack for this job.
 const workRate = (p, j) => p.workM * (p.jb === j ? p.jbM : 1);
+// Forced on by the observer or the person editor: whatever it can't sit beside goes.
+function forceTrait(p, id) {
+  const T = TRAITS[TRAIT_IX[id]];
+  p.traits = p.traits.filter(k => { const o = TRAITS[k]; return o.id !== id && o.opp !== id && T.opp !== o.id; });
+  p.traits.push(T.ix);
+  applyTraits(p);
+}
+function dropTrait(p, id) { const k = p.traits.indexOf(TRAIT_IX[id]); if (k >= 0) { p.traits.splice(k, 1); applyTraits(p); } }
+
+// ---- the observer's blessings and curses: t.boon = { kind: last year it holds }. Old saves have none, and nothing else needs it ----
+const BOON = {
+  bless: { farm: 1.25, health: 0.82, birth: 1.3, happy: 10, name: 'Blessed', col: '#ffe28a' },
+  curse: { farm: 0.75, health: 1.2, birth: 0.7, happy: -10, name: 'Cursed', col: '#b59ad8' },
+  plenty: { farm: 1.35, name: 'Years of plenty', col: '#a7d48a' },
+  want: { farm: 0.55, name: 'Years of want', col: '#e0a070' },
+};
+const BOON_OPP = { bless: 'curse', curse: 'bless', plenty: 'want', want: 'plenty' };
+function giveBoon(t, k, yrs) {
+  const b = t.boon || (t.boon = {});
+  delete b[BOON_OPP[k]];
+  b[k] = Math.max(b[k] || 0, Math.floor(year()) + yrs - 1);  // holds through that year
+  recomputeMods(t);
+}
+const boonLeft = (t, k) => t.boon && t.boon[k] !== undefined ? Math.max(0, t.boon[k] - Math.floor(year()) + 1) : 0;
+// From recomputeMods: plain scales, nothing compounds.
+function powerFx(t, m) {
+  for (const k in t.boon) {
+    const X = BOON[k];
+    if (!X) continue;
+    if (X.farm) m.farm *= X.farm; if (X.health) m.health *= X.health; if (X.birth) m.birth *= X.birth; if (X.happy) m.happy += X.happy;
+  }
+}
+// Once a year per town, from townYear.
+function powersYear(t) {
+  const b = t.boon, yr = Math.floor(year());
+  if (b) {
+    let gone = false;
+    for (const k in b) {
+      if (b[k] >= yr) continue;
+      delete b[k]; gone = true;
+      if ((k === 'bless' || k === 'curse') && tn(t) > 15) chronT('misc', k === 'bless' ? `The blessing on ${t.name} fades. Its people still talk about the good years.` : `The curse on ${t.name} lifts at last.`, t);
+    }
+    if (gone) { if (!Object.keys(b).length) t.boon = null; recomputeMods(t); }
+    const n = tn(t);
+    if (b.bless >= yr) { t.famine = 0; if (t.stock[R.FOOD] < n * 2) t.stock[R.FOOD] += n * 1.2; t.unrest *= 0.6; }
+    if (b.curse >= yr) { t.unrest = Math.min(100, t.unrest + 5); t.stock[R.FOOD] *= 0.9; }
+    if (b.want >= yr) t.stock[R.FOOD] *= 0.85;
+  }
+  if (W.genii && W.genii.length) geniusYear(t);
+}
+// A genius the observer made works the town's open problems every year they live: a fifth of an idea's cost a year, and the credit when it comes.
+const GENIUS_PUSH = 0.2;
+function geniusYear(t) {
+  const G = W.genii;
+  for (let k = G.length - 1; k >= 0; k--) {
+    const p = G[k];
+    if (!p.alive || !hasTrait(p, 'genius')) { G.splice(k, 1); continue; }
+    if (p.town !== t || p.army || ageOf(p) < 14) continue;
+    let T = p.gWork >= 0 ? TECHS[p.gWork] : null;
+    if (!T || t.tech[T.ix] || !eligible(t, T)) T = geniusPick(t);
+    if (!T) { p.gWork = -1; continue; }
+    p.gWork = T.ix;
+    const cost = inventCost(t, T);
+    t.prog[T.ix] += cost * GENIUS_PUSH * (ageOf(p) > 62 ? 0.5 : 1);
+    if (t.prog[T.ix] < cost) continue;
+    const first = !W.firsts[T.id];
+    t._who = p; discover(t, T); t._who = null;
+    p.gWork = -1; p.gN = (p.gN || 0) + 1;
+    if (first && typeof toast === 'function') toast(`${p.name} of ${t.name} works out ${T.name}.`);
+  }
+}
+function geniusPick(t) {
+  const F = techCache(t).front, I = IDEA_TAGS[TRAIT_IX.genius];
+  let best = null, bs = -1;
+  for (let k = 0; k < F.length; k++) {
+    const T = TECHS[F[k]];
+    if (t.tech[T.ix] || (T.cond && !T.cond(t))) continue;
+    let s = t.prog[T.ix] / inventCost(t, T) + rnd() * 0.3 + (W.firsts[T.id] ? 0 : 0.6);  // the unknown to everyone, by choice
+    for (let e = 0; e < I.length; e++) if (I[e][0] === T.tagI) s += I[e][1] * 0.08;
+    if (s > bs) { bs = s; best = T; }
+  }
+  return best;
+}

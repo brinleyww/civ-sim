@@ -79,6 +79,61 @@ let shipCache = new Map();
 const NB_X = [1, -1, 0, 0, 1, 1, -1, -1], NB_Y = [0, 0, 1, -1, 1, -1, 1, -1];
 let NB_D = null, RT_D = null;  // RT_D[k]: the tile to the right of a step in direction k
 
+// ---- ice you can walk on: a lake, a river or a strait frozen thick enough is a road until the thaw (snow.js grows and melts W.ice) ----
+// ICE_WALK: bears a walker; ICE_SAFE: what the careful wait for. Below ICE_SAFE a path pays extra, so people keep to the thick ice.
+const ICE_WALK = 90, ICE_SAFE = 130, ICE_COST = 12;  // ice is drawn frozen past 80: what looks frozen bears a walker
+let ICE_N = 0;               // walkable ice tiles just now: when there are none, pathing does no ice checks at all
+let iceLink = null;          // landId -> the root of the landmasses the ice joins to it (null: no ice touches any shore)
+let iceStale = true, iceLinkT = -1e9, iceRouteT = 0, iceClearT = -1e9, iceSeen = null;
+const iceJoined = (a, b) => a === b || (iceLink !== null && a >= 0 && b >= 0 && iceLink.has(a) && iceLink.get(a) === iceLink.get(b));
+// a tile someone on foot may stand on: dry ground, or water frozen thick enough
+const footOK = i => W.water[i] === 0 || (ICE_N > 0 && W.water[i] !== 3 && W.ice[i] >= ICE_WALK);
+// whether a whole people would trust this route: any ice on it thick enough to hold them all the way over
+const iceSafe = path => { if (!ICE_N) return true; for (let k = 0; k < path.length; k++) { const j = path[k]; if (W.water[j] && W.ice[j] < ICE_SAFE) return false; } return true; };
+// snow.js calls this when a tile's ice crosses ICE_WALK. A thaw makes any cached ice route a lie, so the cache goes (not more than every 20 ticks).
+function iceTurn(up) {
+  ICE_N += up ? 1 : -1; if (ICE_N < 0) ICE_N = 0;
+  iceStale = true;
+  if (!up && iceRouteT) iceRouteT = -1;  // a route over the ice is stored somewhere: drop the cache when allowed
+}
+// Once a tick (stepWorld): keep the cache honest after a thaw, and which shores the ice joins, at most every 60 ticks and only when it changed.
+function iceTick() {
+  if (iceRouteT === -1 && W.tick - iceClearT > 20) {
+    pathCache.clear(); iceClearT = W.tick; iceRouteT = 0;
+    // a host marching over a lake that's going soft plans a new road (war.js plans it again when the old one is gone)
+    if (W.armies) for (const a of W.armies) if (a.path && a.phase === 'march') for (let k = 0; k < a.path.length; k++) { const j = a.path[k]; if (W.water[j] && W.ice[j] < ICE_WALK) { a.path = null; break; } }
+  }
+  if ((iceStale && W.tick - iceLinkT >= 60) || W.tick % (TPY * 2) === 77) iceRelink();  // and now and then regardless, so the count never drifts
+}
+// Flood each sheet of walkable ice and join every landmass it touches. Also recounts ICE_N, so it never drifts.
+function iceRelink() {
+  iceStale = false; iceLinkT = W.tick; iceLink = null;
+  const ice = W.ice, water = W.water, lid = W.landId, n = ice ? ice.length : 0;
+  if (!n) { ICE_N = 0; return; }
+  if (!iceSeen || iceSeen.length !== n) iceSeen = new Uint8Array(n); else iceSeen.fill(0);
+  const seen = iceSeen, par = new Map(), st = [];
+  const find = a => { while (par.get(a) !== a) a = par.get(a); return a; };
+  let cnt = 0;
+  for (let i = 0; i < n; i++) {
+    if (seen[i] || ice[i] < ICE_WALK || !water[i] || water[i] === 3) continue;
+    let root = -1; st.length = 0; st.push(i); seen[i] = 1;
+    while (st.length) {
+      const c = st.pop(); cnt++;
+      for (let k = 0; k < 8; k++) {
+        const j = c + NB_D[k];
+        if (j < 0 || j >= n) continue;
+        if (!water[j]) {
+          const L = lid[j]; if (L < 0) continue;
+          if (!par.has(L)) par.set(L, L);
+          const r = find(L);
+          if (root < 0) root = r; else if (r !== root) par.set(r, root);
+        } else if (!seen[j] && water[j] !== 3 && ice[j] >= ICE_WALK) { seen[j] = 1; st.push(j); }
+      }
+    }
+  }
+  ICE_N = cnt;
+  if (par.size > 1) { iceLink = new Map(); for (const L of par.keys()) iceLink.set(L, find(L)); }
+}
 function initPathing() {
   const n = W.w * W.h;
   gs = new Float32Array(n); cf = new Int32Array(n); stampA = new Int32Array(n);
@@ -88,6 +143,7 @@ function initPathing() {
   RT_D = NB_X.map((dx, k) => -NB_Y[k] + dx * W.w);
   if (!W.seaW) W.seaW = new Uint8Array(n);
   if (!W.rtype || W.rtype.length !== n) W.rtype = new Uint8Array(n);  // road types (roads.js)
+  iceRouteT = 0; iceClearT = -1e9; iceRelink();
 }
 function hPush(i, f) {
   let k = heapN++;
@@ -144,7 +200,9 @@ function findPath(a, b, mode0, cls0) {
   const water = W.water, cost = W.cost, w = W.w, occ = W.occ, road = W.road, tileN = W.tileN, bAt = W.bAt, rail = W.rail, elev = W.elev, rtype = W.rtype;
   const cls = cls0 || 0, loose = mode0 >= 8, mode = mode0 & 7, rc = cls ? ROAD_SPEED[cls & 7] : null, onRail = cls >= 8;
   if (water[b] === 3) return null;
-  if (mode === 0 && water[a] === 0 && water[b] === 0 && W.landId[a] !== W.landId[b]) return null;
+  if (mode === 0 && water[a] === 0 && water[b] === 0 && W.landId[a] !== W.landId[b] && !iceJoined(W.landId[a], W.landId[b])) return null;
+  const ice = W.ice, onIce = ICE_N > 0 && mode < 2;  // on foot (or by boat over open water), frozen water bears a walker
+  if (mode === 0 && water[b] && !(onIce && ice[b] >= ICE_WALK)) return null;  // open water on foot: no search could end there
   const key = ((a * 1048576 + b) * 16 + mode0) * 16 + cls;
   const hit = pathCache.get(key);
   if (hit) return hit.length ? hit : null;
@@ -169,7 +227,7 @@ function findPath(a, b, mode0, cls0) {
     stampA[cur] = closed;
     if (cur === b) { found = true; break; }
     if (++n > maxN) break;
-    const g0 = gs[cur], curLand = water[cur] === 0;
+    const g0 = gs[cur], curDry = water[cur] === 0, curLand = curDry || (onIce && mode < water[cur] && ice[cur] >= ICE_WALK);
     for (let k = 0; k < 8; k++) {
       const ni = cur + NB_D[k];
       if (stampA[ni] === closed) continue;
@@ -194,13 +252,17 @@ function findPath(a, b, mode0, cls0) {
           const crowd = tileN[ni];
           if (crowd > 5) { const over = crowd - TILE_CAP[lv]; if (over > 0) c += over > 20 ? 20 : over; }
           // a road is graded, so it takes the slope easier; a railway can barely climb at all
-          if (curLand && !(onRail && rail[ni])) c += climbOf(elev[ni] - elev[cur]) * (lv >= 3 ? 0.45 : lv ? 0.75 : 1);
+          if (curDry && !(onRail && rail[ni])) c += climbOf(elev[ni] - elev[cur]) * (lv >= 3 ? 0.45 : lv ? 0.75 : 1);
         }
       }
-      else if (wa === 1) { if (mode < 1) continue; c = SAIL_COST; }
-      else if (wa === 2) { if (mode < 2) continue; c = SAIL_COST; }
-      else continue;
-      if (curLand !== (wa === 0)) c += 50;
+      let dry = wa === 0;
+      if (wa === 3) continue;
+      else if (!dry) {
+        if (mode >= wa) c = SAIL_COST;
+        else if (onIce && ice[ni] >= ICE_WALK) { const v = ice[ni]; c = v >= ICE_SAFE ? ICE_COST : ICE_COST + (ICE_SAFE - v) * 0.5; dry = true; }  // barely thick: only when the way round is long
+        else continue;
+      }
+      if (curLand !== dry) c += 50;
       if (k > 3) c *= 1.414;
       const g = g0 + c;
       if (stampA[ni] === open && gs[ni] <= g) continue;
@@ -216,6 +278,8 @@ function findPath(a, b, mode0, cls0) {
   for (let c = b; c !== a; c = cf[c]) len++;
   const path = new Int32Array(len);
   for (let c = b, k = len - 1; k >= 0; k--) { path[k] = c; c = cf[c]; }
+  // a route over the ice is only good till the thaw: remembered, so the thaw can clear the cache (iceTick)
+  if (onIce && iceRouteT >= 0) for (let k = 0; k < len; k++) if (water[path[k]]) { iceRouteT = W.tick + 1; break; }
   if (pathCache.size > 240000) pathCache.clear();
   pathCache.set(key, path);
   pathCache.set(((b * 1048576 + a) * 16 + mode0) * 16 + cls, path.slice().reverse());

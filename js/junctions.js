@@ -327,6 +327,7 @@ function drawStreetJunctions(ctx, z, x0, y0, x1, y1) {
   for (const J of L) {
     const cx = stCx(J.x, J.y), cy = stCy(J.x, J.y), i = J.i;
     if (J.kind === 'bridge') {
+      if (typeof drawBridges === 'function' && typeof bridgeAt === 'function' && bridgeAt(J.i)) continue;  // drawn by kind (bridgeart.js)
       // low stone or steel parapets along the deck where a street crosses a river or canal
       const ew = (J.arms & 3) || !(J.arms & 12);
       ctx.strokeStyle = '#c8c2b4'; ctx.lineWidth = 0.45;
