@@ -288,3 +288,50 @@ function findShipPath(a, b, spec) {
   shipCache.set(key, path);
   return path;
 }
+
+// ---- saves. The world is one web of objects (people point at towns, towns at realms, realms at people, and on round), and a
+// structured clone walks it recursively, so a long game grows chains deep enough to overflow the stack. A save is packed flat
+// first: every object goes into one table and each reference becomes a short string. Nothing in the world itself changes.
+const PK_REF = '\u0001', PK_ESC = '\u0002';
+function packWorld(root) {
+  const ids = new Map([[root, 0]]), src = [root], tab = [];
+  const enc = v => {
+    if (v === null || typeof v !== 'object') return typeof v === 'string' && v.charCodeAt(0) <= 2 ? PK_ESC + v : v;
+    let k = ids.get(v);
+    if (k === undefined) { k = src.length; ids.set(v, k); src.push(v); }
+    return PK_REF + k;
+  };
+  for (let q = 0; q < src.length; q++) {
+    const o = src[q];
+    let c;
+    if (ArrayBuffer.isView(o) || o instanceof ArrayBuffer || o instanceof Date || o instanceof RegExp) c = o;  // leaves: cloned as they are
+    else if (Array.isArray(o)) { const n = o.length; c = new Array(n); for (let i = 0; i < n; i++) if (i in o) c[i] = enc(o[i]); }
+    else if (o instanceof Map) { c = []; for (const [k, v] of o) c.push(enc(k), enc(v)); c = { [PK_REF + 'map']: c }; }
+    else if (o instanceof Set) { c = []; for (const v of o) c.push(enc(v)); c = { [PK_REF + 'set']: c }; }
+    else { c = {}; for (const k of Object.keys(o)) c[k] = enc(o[k]); }
+    tab.push(c);
+  }
+  return { flat: 1, tab };
+}
+function unpackWorld(P) {
+  const tab = P.tab, MAP = PK_REF + 'map', SET = PK_REF + 'set', later = [];
+  // maps and sets are made fresh, so they have to exist before anything is pointed at them
+  for (let q = 0; q < tab.length; q++) { const c = tab[q]; if (c && (c[MAP] || c[SET])) { later.push(q, c); tab[q] = c[MAP] ? new Map() : new Set(); } }
+  const dec = v => {
+    if (typeof v !== 'string') return v;
+    const c = v.charCodeAt(0);
+    return c === 1 ? tab[+v.slice(1)] : c === 2 ? v.slice(1) : v;
+  };
+  for (let q = 0; q < tab.length; q++) {
+    const o = tab[q];
+    if (ArrayBuffer.isView(o) || o instanceof Map || o instanceof Set || o instanceof ArrayBuffer || o instanceof Date || o instanceof RegExp) continue;
+    if (Array.isArray(o)) { for (let i = 0; i < o.length; i++) if (i in o) o[i] = dec(o[i]); }
+    else for (const k in o) o[k] = dec(o[k]);
+  }
+  for (let q = 0; q < later.length; q += 2) {
+    const m = tab[later[q]], c = later[q + 1];
+    if (c[MAP]) { const a = c[MAP]; for (let i = 0; i < a.length; i += 2) m.set(dec(a[i]), dec(a[i + 1])); }
+    else for (const v of c[SET]) m.add(dec(v));
+  }
+  return tab[0];
+}

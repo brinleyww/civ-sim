@@ -91,16 +91,17 @@ const TECHS = [
 ];
 const knows = (t, id) => t.tech[TECH_IX[id]] === 1;
 // An age arrives once most of the previous one is known, not with the first lucky early invention.
+let ERA_MAIN = null;  // the age-making inventions by age, built on first use (TECHS is only complete once content.js has run)
 function eraOfKnown(has) {
+  if (!ERA_MAIN) { ERA_MAIN = ERAS.map(() => []); for (const T of TECHS) if (!T.side && ERA_MAIN[T.era]) ERA_MAIN[T.era].push(T); }
   let era = 0;
   for (let e = 1; e < ERAS.length; e++) {
-    let prev = 0, prevAll = 0, cur = 0;
-    for (const T of TECHS) {
-      if (T.side) continue;
-      if (T.era === e - 1) { prevAll++; if (has(T)) prev++; }
-      if (T.era === e && has(T)) cur++;
-    }
-    if (cur > 0 && prev >= prevAll * 0.6) era = e; else break;
+    const P = ERA_MAIN[e - 1], N = ERA_MAIN[e];
+    let prev = 0, cur = 0;
+    for (const T of N) if (has(T)) { cur++; break; }
+    if (!cur) break;
+    for (const T of P) if (has(T)) prev++;
+    if (prev >= P.length * 0.6) era = e; else break;
   }
   return era;
 }

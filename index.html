@@ -158,7 +158,8 @@
 </div>
 
 <div id="techModal" class="modal" hidden><div class="card wide"><button class="close" data-close>×</button><h2>Inventions</h2>
-  <div id="techBar"><label>Whose? <select id="techRealm"></select></label><div id="techTabs" role="group" aria-label="View"><button data-v="tree" class="on">Inventions</button><button data-v="branches">Lines of invention</button><button data-v="paths">Paths</button></div></div>
+  <div id="techBar"><label>Whose? <select id="techRealm"></select></label><div id="techTabs" role="group" aria-label="View"><button data-v="tree" class="on">Inventions</button><button data-v="grid">Age tree</button><button data-v="branches">Lines of invention</button><button data-v="paths">Paths</button></div></div>
+  <div id="techFind"><input id="techQ" type="search" placeholder="Search by name…" autocomplete="off" aria-label="Search inventions"><select id="techFEra" aria-label="Age"></select><select id="techFTag" aria-label="Field"></select><select id="techFSt" aria-label="State"><option value="">Known or not</option><option value="known">Known</option><option value="ready">Can be worked out now</option><option value="locked">Locked</option></select><select id="techFKind" aria-label="Kind"><option value="">Main and side</option><option value="main">Age-making only</option><option value="side">Side only</option></select><span id="techCount"></span></div>
   <div id="techInfo"></div><div id="techTree"></div></div></div>
 <div id="statsModal" class="modal" hidden><div class="card wide viz"><button class="close" data-close>×</button><h2>Statistics</h2><div id="statsBody"></div></div></div>
 <div id="econModal" class="modal" hidden><div class="card wide"><button class="close" data-close>×</button><h2>The world’s money</h2><div id="econBody"></div></div></div>
@@ -187,9 +188,14 @@
 <script src="js/earth.js"></script>
 <script src="js/tech.js"></script>
 <script src="js/inventions.js"></script>
+<script src="js/techgen.js"></script>
+<script src="js/techfam_a.js"></script>
+<script src="js/techfam_b.js"></script>
+<script src="js/techfam_c.js"></script>
 <script src="js/content.js"></script>
 <script src="js/traits.js"></script>
 <script src="js/society.js"></script>
+<script src="js/discovery.js"></script>
 <script src="js/politics.js"></script>
 <script src="js/people.js"></script>
 <script src="js/money.js"></script>

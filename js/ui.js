@@ -31,7 +31,7 @@ function updateTop() {
   $('sPop').title = `Limit ${fmt(W.maxPop)}. ${fmt(W.people.length)} are simulated one by one right now, as many as this computer can run; the rest as crowds that work, grow and die the same way.`;
   $('sTowns').textContent = fmt(W.towns.length);
   $('sKing').textContent = fmt(W.polities.filter(p => p.alive && p.pop > 0).length);
-  $('sTech').textContent = `${Object.keys(W.firsts).length}/${TECHS.filter(T => !T.start).length}`;
+  $('sTech').textContent = `${Object.keys(W.firsts).length}/${NT_INV}`;
   $('sWar').textContent = W.wars.length;
 }
 // Panels refresh several times a second. Rewriting one that hasn't changed, or that the player is pressing on, loses their click,
@@ -162,14 +162,14 @@ const TRANS_NAME = ['On foot', 'Pack animals', 'Wagons', 'Carriages and bicycles
 function townEconHTML(t) {
   const cur = t.polity.cur, tops = [R.FOOD, R.WOOD, R.CLOTH, R.TOOLS, R.STEEL, R.GOODS];
   if (cur.kind < 2) return `<div class="sub">${cur.kind ? 'People swap salt, shells and cattle.' : 'No money yet. People swap what they have.'}</div>`;
-  return `<div class="kv"><span>Output a year</span><b>${fmt(t.gdp)} ${esc(cur.name)}</b><span>Typical wage</span><b>${t.wage.toFixed(1)}</b><span>Loaf-equivalent wage</span><b>${t.realWage.toFixed(1)}</b><span>Money in town</span><b>${fmt(t.cash)}</b><span>Top tenth holds</span><b>${Math.round(t.gini * 70)}%</b></div>
-  <div class="goods">${tops.filter(r => wantOf(t, r) > 0 || t.stock[r] > 1).map(r => `<div><span>${RES_NAME[r]}</span><b>${t.price[r] < 10 ? t.price[r].toFixed(1) : fmt(t.price[r])}</b></div>`).join('')}</div>${econMoreHTML(t)}`;
+  return `<div class="kv"><span>Output a year</span><b>${fmt(t.gdp)} ${esc(cur.name)}</b><span>Typical wage</span><b>${fxFmt(t.wage)}</b><span>Loaf-equivalent wage</span><b>${t.realWage.toFixed(1)}</b><span>Money in town</span><b>${fmt(t.cash)}</b><span>Top tenth holds</span><b>${Math.round(t.gini * 70)}%</b></div>
+  <div class="goods">${tops.filter(r => wantOf(t, r) > 0 || t.stock[r] > 1).map(r => `<div><span>${RES_NAME[r]}</span><b>${fxFmt(t.price[r])}</b></div>`).join('')}</div>${econMoreHTML(t)}`;
 }
 function realmEconHTML(p) {
   const c = p.cur, d = c.gdpLast || 1;
   if (c.kind < 2) return `<div class="sub">${MONEY_KIND[c.kind]}. Nobody here is counting yet.</div>`;
   const hl = c.slump > 0.2 ? 'In a depression' : c.boom > 0.5 ? 'Booming' : c.infl > 0.1 ? 'Prices running away' : 'Steady';
-  return `<div class="kv"><span>Money</span><b>${esc(c.name)} (${MONEY_KIND[c.kind].toLowerCase()})</b><span>Economy</span><b>${hl}</b><span>Output a year</span><b>${fmt(d)}</b><span>Per person</span><b>${(d / Math.max(p.pop, 1)).toFixed(1)}</b><span>Treasury</span><b>${fmt(c.treasury)}</b><span>Debt</span><b>${fmt(c.debt)} (${Math.round(c.debt / d * 100)}% of output)</b><span>Interest</span><b>${(c.rate * 100).toFixed(1)}%</b><span>Inflation</span><b>${(c.infl * 100).toFixed(1)}%</b><span>Prices since it began</span><b>${c.level.toFixed(1)}x</b><span>Tax rate</span><b>${Math.round(c.tax * 100)}%</b><span>Tariff</span><b>${Math.round(c.tariff * 100)}%</b><span>Worth abroad</span><b>${c.value.toFixed(3)}</b>${c.debase > 0.05 ? `<span>Metal in the coin</span><b>${Math.round((1 - c.debase) * 100)}%</b>` : ''}</div>
+  return `<div class="kv"><span>Money</span><b>${esc(c.name)} (${MONEY_KIND[c.kind].toLowerCase()})</b><span>Economy</span><b>${hl}</b><span>Output a year</span><b>${fmt(d)}</b><span>Per person</span><b>${fxFmt(d / Math.max(p.pop, 1))}</b><span>Treasury</span><b>${fmt(c.treasury)}</b><span>Debt</span><b>${fmt(c.debt)} (${Math.round(c.debt / d * 100)}% of output)</b><span>Interest</span><b>${(c.rate * 100).toFixed(1)}%</b><span>Inflation</span><b>${(c.infl * 100).toFixed(1)}%</b><span>Prices since it began</span><b>${c.level.toFixed(1)}x</b><span>Tax rate</span><b>${Math.round(c.tax * 100)}%</b><span>Tariff</span><b>${Math.round(c.tariff * 100)}%</b><span>Worth abroad</span><b>${fxFmt(c.value)}</b>${c.debase > 0.05 ? `<span>Metal in the coin</span><b>${Math.round((1 - c.debase) * 100)}%</b>` : ''}</div>
   ${c.unpaid ? `<div class="sub" style="color:#ff8f7a">The soldiers haven't been paid for ${c.unpaid} years.</div>` : ''}${econMoreHTML(p)}`;
 }
 function townHTML(t) {
@@ -464,17 +464,21 @@ function openTech(pol) {
   if (UI.techRealm !== -1 && !techViewPol()) UI.techRealm = -1;
   $('techRealm').innerHTML = `<option value="-1">The whole world</option>` + list.map(p => `<option value="${p.id}" ${p.id === UI.techRealm ? 'selected' : ''}>${esc(p.name)} (${p.techs})</option>`).join('');
   document.querySelectorAll('#techTabs button').forEach(b => b.classList.toggle('on', b.dataset.v === UI.techView));
+  techWire(); TV.t = -1e9;
+  $('techFind').hidden = UI.techView !== 'tree';
   if (UI.techView === 'paths') { $('techInfo').hidden = true; renderPaths(); return; }
   if (UI.techView === 'branches') { $('techInfo').hidden = false; renderBranches(); techDetail(UI.techSel); return; }
   $('techInfo').hidden = false;
+  if (UI.techView === 'tree') { renderTechList(); techDetail(UI.techSel); return; }
+  // 'grid': the age-making inventions only, in age columns with the lines between them
   const pv = techViewPol();
   const has = T => T.start || (pv ? pv.know[T.ix] === 1 : !!W.firsts[T.id]);
-  const reach = {};
-  for (const T of TECHS) reach[T.id] = !T.start && T.reqIx.every(r => has(TECHS[r]));
+  const reach = {}, MAIN = TECHS.filter(T => !T.side);
+  for (const T of MAIN) reach[T.id] = !T.start && T.reqIx.every(r => has(TECHS[r]));
   let html = '<div id="techGrid"><svg id="techLines"></svg>';
   ERAS.forEach((name, e) => {
     html += `<div class="ecol"><h4>${name}</h4>`;
-    for (const T of TECHS) {
+    for (const T of MAIN) {
       if (T.era !== e) continue;
       const f = W.firsts[T.id], known = has(T);
       const when = pv ? (pv.firsts[T.id] !== undefined ? `year ${pv.firsts[T.id]}` : known && !T.start ? 'learned from others' : '') : (f ? `year ${f.year}` : '');
@@ -486,6 +490,103 @@ function openTech(pol) {
   $('techTree').innerHTML = html;
   drawTechLines();
   techDetail(UI.techSel);
+}
+// The whole list, some thousands long: grouped by age (the written-out ones) and by generated family, groups shut until clicked.
+const TF = { q: '', era: -1, tag: '', st: '', kind: '', open: new Map(), lim: {}, wired: 0 };
+const TV = { s: null, pol: -2, t: -1e9, known: 0, ready: 0, total: 0 };  // per-invention state, 3 from the start, 2 known, 1 could come next, 0 locked
+let TECH_GR = null;
+function techGroups() {
+  if (TECH_GR) return TECH_GR;
+  const G = [], fam = {}, low = new Array(NT), gOf = new Int16Array(NT);
+  const nm = id => { const T = TECHS[TECH_IX[id]]; return T ? T.name : id; };
+  ERAS.forEach((e, k) => G.push({ key: 'e' + k, era: k, o: -1, title: 'Written-out inventions', sub: '', m: [] }));
+  GEN_FAMILIES.forEach((F, o) => {
+    const names = F.x ? F.x.map(s => s.split(';')[0].replace('*', '')) : F.l.map(L => L.slice(L.indexOf('>') + 1).split('/')[0].replace(/^\d+ /, '').split('=')[0]);
+    const a = F.a || (F.x ? F.x.map(s => s.split(';')[2]) : F.l.map(L => L.slice(0, L.indexOf('>')).split(';')[0])).find(q => q) || '';
+    fam[F.k] = { key: 'f_' + F.k, era: 99, o, fam: 1, title: names.slice(0, 3).join(', ') + (names.length > 3 ? ` and ${names.length - 3} more` : ''), sub: (a ? `Grows from ${nm(a.split('+')[0])} · ` : '') + (TAG_NAME[F.tag.replace('!', '')] || ''), m: [] };
+    G.push(fam[F.k]);
+  });
+  for (const T of TECHS) {
+    low[T.ix] = T.name.toLowerCase();
+    const g = (T.id.startsWith('g_') && fam[T.id.slice(2).replace(/\d+_\d+$/, '')]) || G[T.era];
+    g.m.push(T.ix); if (g.fam && T.era < g.era) g.era = T.era;
+  }
+  for (let e = 0; e < ERAS.length; e++) { const m = G[e].m, n = m.filter(i => !TECHS[i].side).length; G[e].sub = `${n} that make the age, ${m.length - n} beside them`; }
+  const list = G.filter(g => g.m.length).sort((a, b) => a.era - b.era || a.o - b.o);
+  list.forEach((g, k) => { for (const i of g.m) gOf[i] = k; });
+  return (TECH_GR = { list, low, gOf });
+}
+// Cached: refreshed when the realm changes or at most once a second.
+function techStates() {
+  const pv = techViewPol(), pid = pv ? pv.id : -1, now = performance.now();
+  if (TV.s && TV.pol === pid && now - TV.t < 1000) return TV;
+  const s = TV.s && TV.s.length === NT ? TV.s : new Uint8Array(NT);
+  let known = 0, ready = 0, total = 0;
+  for (let i = 0; i < NT; i++) { const T = TECHS[i]; s[i] = T.start ? 3 : (pv ? pv.know[i] === 1 : !!W.firsts[T.id]) ? 2 : 0; if (!T.start) { total++; if (s[i]) known++; } }
+  for (let i = 0; i < NT; i++) if (!s[i]) { const rq = TECHS[i].reqIx; let ok = 1; for (let k = 0; k < rq.length; k++) if (s[rq[k]] < 2) { ok = 0; break; } if (ok) { s[i] = 1; ready++; } }
+  Object.assign(TV, { s, pol: pid, t: now, known, ready, total });
+  return TV;
+}
+const techFilterOn = () => !!(TF.q || TF.era >= 0 || TF.tag || TF.st || TF.kind);
+function techMatch(T, s, low) {
+  if (TF.era >= 0 && T.era !== TF.era) return false;
+  if (TF.tag && T.tag !== TF.tag) return false;
+  if (TF.kind && (TF.kind === 'main') === !!T.side) return false;
+  if (TF.st) { const v = s[T.ix]; if (TF.st === 'known' ? v < 2 : TF.st === 'ready' ? v !== 1 : v !== 0) return false; }
+  return !TF.q || low[T.ix].includes(TF.q);
+}
+function techGroupRes(g) {
+  const { s } = techStates(), { low } = techGroups(), on = techFilterOn(), m = [];
+  let k = 0;
+  for (const i of g.m) { if (s[i] >= 2) k++; if (!on || techMatch(TECHS[i], s, low)) m.push(i); }
+  return { m, k };
+}
+function techTileHTML(T, s, pv) {
+  const v = s[T.ix], known = v >= 2;
+  const when = pv ? (pv.firsts[T.id] !== undefined ? `year ${pv.firsts[T.id]}` : known && !T.start ? 'learned from others' : '') : (W.firsts[T.id] ? `year ${W.firsts[T.id].year}` : '');
+  return `<div class="tile ${known ? 'known' : v === 1 ? 'ready' : ''}${T.mil ? ' mil' : ''}${T.side ? '' : ' main'}${UI.techSel === T.id ? ' sel' : ''}" data-tech="${T.id}">${esc(T.name)}${when ? `<small>${when}</small>` : T.start ? '<small>from the start</small>' : ''}</div>`;
+}
+function techGroupHTML(g, r, auto) {
+  const o = TF.open.get(g.key), open = o === undefined ? auto : o, on = techFilterOn();
+  let h = `<div class="tgrp" data-g="${g.key}"><div class="tgHead" data-tg="${g.key}"><span class="tgArr">${open ? '▾' : '▸'}</span><b>${esc(g.title)}</b><small>${esc(g.sub)}</small><span class="tgN">${on ? `${r.m.length.toLocaleString('en-GB')} shown · ` : ''}${r.k}/${g.m.length} known</span><i style="width:${(r.k / g.m.length * 100).toFixed(1)}%"></i></div>`;
+  if (open) {
+    const { s } = techStates(), pv = techViewPol(), lim = TF.lim[g.key] || 240;
+    h += '<div class="tgBody">' + r.m.slice(0, lim).map(i => techTileHTML(TECHS[i], s, pv)).join('') + '</div>';
+    if (r.m.length > lim) h += `<button class="tgMore" data-tgmore="${g.key}">Show ${Math.min(480, r.m.length - lim)} more of ${(r.m.length - lim).toLocaleString('en-GB')}</button>`;
+  }
+  return h + '</div>';
+}
+function renderTechList() {
+  const { list } = techGroups(), S = techStates(), on = techFilterOn(), pv = techViewPol();
+  const res = list.map(techGroupRes), shown = res.reduce((a, r) => a + r.m.length, 0);
+  const now = pv ? pv.era : W.eraNow, autoAll = on && shown <= 300;
+  let h = '', era = -1;
+  list.forEach((g, k) => {
+    const r = res[k];
+    if (on && !r.m.length) return;
+    if (g.era !== era) { era = g.era; h += `<h4 class="tgEra">${esc(ERAS[era])}</h4>`; }
+    h += techGroupHTML(g, r, autoAll || (!on && !g.fam && g.era === now));
+  });
+  $('techCount').textContent = `${S.known.toLocaleString('en-GB')} / ${S.total.toLocaleString('en-GB')} known · ${S.ready.toLocaleString('en-GB')} could come next` + (on ? ` · ${shown.toLocaleString('en-GB')} shown` : '');
+  $('techTree').innerHTML = `<div id="techList">${h || '<p class="pathIntro">Nothing matches.</p>'}</div>`;
+}
+function techRegroup(key) {
+  const { list } = techGroups(), g = list.find(q => q.key === key), el = $('techTree').querySelector(`.tgrp[data-g="${key}"]`);
+  if (g && el) el.outerHTML = techGroupHTML(g, techGroupRes(g), false);
+}
+function techWire() {
+  if (TF.wired) return; TF.wired = 1;
+  $('techFEra').innerHTML = '<option value="-1">Any age</option>' + ERAS.map((n, e) => `<option value="${e}">${n}</option>`).join('');
+  $('techFTag').innerHTML = '<option value="">Any field</option>' + TAGS.map(k => `<option value="${k}">${esc(TAG_NAME[k][0].toUpperCase() + TAG_NAME[k].slice(1))}</option>`).join('');
+  const again = () => { TF.open.clear(); TF.lim = {}; $('techTree').scrollTop = 0; renderTechList(); };
+  let tmr = 0;
+  $('techQ').addEventListener('input', e => { clearTimeout(tmr); tmr = setTimeout(() => { TF.q = e.target.value.trim().toLowerCase(); again(); }, 150); });
+  for (const [id, k] of [['techFEra', 'era'], ['techFTag', 'tag'], ['techFSt', 'st'], ['techFKind', 'kind']]) $(id).addEventListener('change', e => { TF[k] = k === 'era' ? +e.target.value : e.target.value; again(); });
+  $('techTree').addEventListener('click', e => {
+    const hd = e.target.closest('[data-tg]'), more = e.target.closest('[data-tgmore]');
+    if (hd) { const key = hd.dataset.tg; TF.open.set(key, hd.querySelector('.tgArr').textContent !== '▾'); techRegroup(key); }
+    else if (more) { const key = more.dataset.tgmore; TF.lim[key] = (TF.lim[key] || 240) + 480; TF.open.set(key, true); techRegroup(key); }
+  });
 }
 // Three long lines of invention side by side, each step in the order people usually reach it.
 function renderBranches() {
@@ -529,7 +630,7 @@ function drawTechLines() {
   const pos = {};
   grid.querySelectorAll('.tile').forEach(el => { const r = el.getBoundingClientRect(); pos[el.dataset.tech] = { l: (r.left - gr.left) / k, r: (r.right - gr.left) / k, y: (r.top - gr.top + r.height / 2) / k }; });
   const sel = UI.techSel;
-  for (const T of TECHS) for (const q of T.req || []) {
+  for (const T of TECHS) if (pos[T.id]) for (const q of T.req || []) {
     const a = pos[q], b = pos[T.id];
     if (!a || !b) continue;
     const on = sel && (T.id === sel || q === sel);
@@ -562,7 +663,8 @@ function techDetail(id) {
   if (!id) { el.innerHTML = `<span style="color:var(--ink3)">Click an invention to see what it needs. ${pv ? `Gold ones are known in ${esc(pv.name)}; blue ones could come next, from the work its people do or from trade.` : 'Gold ones have been found somewhere in the world; blue ones could be found next. Pick a realm above to see what it knows.'} Red-edged ones are weapons of war, which realms guard closely.</span>`; return; }
   const T = TECHS[TECH_IX[id]], f = W.firsts[id];
   const reqs = (T.req || []).map(r => TECHS[TECH_IX[r]].name);
-  el.innerHTML = `<b>${esc(T.name)}</b> <span style="color:var(--ink3)">${ERAS[T.era]}</span><br>${esc(T.desc || '')}<br>
+  const fg = TECH_GR && TECH_GR.list[TECH_GR.gOf[T.ix]];
+  el.innerHTML = `<b>${esc(T.name)}</b> <span style="color:var(--ink3)">${ERAS[T.era]} · ${T.side ? 'a side invention' : 'helps make the age'}${fg && fg.fam ? ' · one of ' + esc(fg.title) : ''}</span><br>${esc(T.desc || '')}<br>
   <span style="color:var(--ink3)">${T.start ? 'Everyone starts with this.' : `Comes from: ${JOB_NAME[T.dom]}s${T.alt ? ' and ' + JOB_NAME[T.alt] + 's' : ''}.${reqs.length ? ' Needs ' + reqs.join(', ') + '.' : ''}${T.condText ? ' Only possible with: ' + T.condText.toLowerCase() + '.' : ''}`}
   ${f ? `First found in year ${f.year} by ${esc(f.who)} of ${esc(f.town)}. Known in ${townsKnowing(T.ix)} of ${W.towns.length} settlements.` : T.start ? '' : 'Not yet found by anyone.'}</span>
   ${T.start ? '' : techRealmLine(T, pv)}`;
@@ -583,10 +685,10 @@ function openEcon() {
   const P = W.polities.filter(p => p.alive && p.pop > 0).sort((a, b) => (b.cur.gdpLast || 0) * b.cur.value - (a.cur.gdpLast || 0) * a.cur.value);
   const rows = P.slice(0, 24).map(p => {
     const c = p.cur, d = c.gdpLast || 0, state = c.kind < 2 ? MONEY_KIND[c.kind] : c.slump > 0.2 ? 'Depression' : c.infl > 0.25 ? 'Runaway prices' : c.boom > 0.5 ? 'Boom' : c.unpaid ? 'Unpaid troops' : 'Steady';
-    return '<tr><td><i style="background:' + p.color + '"></i>' + esc(p.name) + '</td><td>' + esc(c.kind >= 2 ? c.name : '—') + '</td><td>' + MONEY_KIND[c.kind] + '</td><td class="n">' + fmt(d * c.value) + '</td><td class="n">' + (d * c.value / Math.max(p.pop, 1)).toFixed(1) + '</td><td class="n">' + (c.kind >= 2 ? (c.infl * 100).toFixed(1) + '%' : '—') + '</td><td class="n">' + (c.kind >= 2 ? Math.round(c.debt / Math.max(d, 1) * 100) + '%' : '—') + '</td><td class="n">' + (c.kind >= 2 ? Math.round(c.tax * 100) + '%' : '—') + '</td><td class="n">' + (c.kind >= 2 ? c.value.toFixed(3) : '—') + '</td><td>' + state + '</td></tr>';
+    return '<tr><td><i style="background:' + p.color + '"></i>' + esc(p.name) + '</td><td>' + esc(c.kind >= 2 ? c.name : '—') + '</td><td>' + MONEY_KIND[c.kind] + '</td><td class="n">' + fmt(d * c.value) + '</td><td class="n">' + fxFmt(d * c.value / Math.max(p.pop, 1)) + '</td><td class="n">' + (c.kind >= 2 ? (c.infl * 100).toFixed(1) + '%' : '—') + '</td><td class="n">' + (c.kind >= 2 ? Math.round(c.debt / Math.max(d, 1) * 100) + '%' : '—') + '</td><td class="n">' + (c.kind >= 2 ? Math.round(c.tax * 100) + '%' : '—') + '</td><td class="n">' + (c.kind >= 2 ? fxFmt(c.value) : '—') + '</td><td>' + state + '</td></tr>';
   }).join('');
   const biggest = W.towns.slice().sort((a, b) => tn(b) - tn(a)).slice(0, 10);
-  const towns = biggest.map(t => '<tr><td><i style="background:' + t.polity.color + '"></i>' + esc(t.name) + '</td><td class="n">' + fmt(tn(t)) + '</td><td class="n">' + t.wage.toFixed(1) + '</td><td class="n">' + t.realWage.toFixed(1) + '</td><td class="n">' + t.price[R.FOOD].toFixed(1) + '</td><td class="n">' + t.price[R.TOOLS].toFixed(1) + '</td><td class="n">' + Math.round(t.gini * 70) + '%</td><td class="n">' + Math.round(t.literacy * 100) + '%</td><td class="n">' + Math.round(t.lifeExp) + '</td></tr>').join('');
+  const towns = biggest.map(t => '<tr><td><i style="background:' + t.polity.color + '"></i>' + esc(t.name) + '</td><td class="n">' + fmt(tn(t)) + '</td><td class="n">' + fxFmt(t.wage) + '</td><td class="n">' + t.realWage.toFixed(1) + '</td><td class="n">' + t.price[R.FOOD].toFixed(1) + '</td><td class="n">' + t.price[R.TOOLS].toFixed(1) + '</td><td class="n">' + Math.round(t.gini * 70) + '%</td><td class="n">' + Math.round(t.literacy * 100) + '%</td><td class="n">' + Math.round(t.lifeExp) + '</td></tr>').join('');
   $('econBody').innerHTML = '<p class="sub">Output is shown in silver-weight terms so realms can be compared. Hover a realm’s panel for its full books.</p><div class="scrollT"><table class="econ"><thead><tr><th>Realm</th><th>Money</th><th>Kind</th><th class="n">Output</th><th class="n">Per person</th><th class="n">Inflation</th><th class="n">Debt</th><th class="n">Tax</th><th class="n">Worth abroad</th><th>State</th></tr></thead><tbody>' + rows + '</tbody></table></div><h3>Biggest towns</h3><div class="scrollT"><table class="econ"><thead><tr><th>Town</th><th class="n">People</th><th class="n">Wage</th><th class="n">In loaves</th><th class="n">Bread</th><th class="n">Tools</th><th class="n">Top tenth holds</th><th class="n">Literacy</th><th class="n">Age at death</th></tr></thead><tbody>' + towns + '</tbody></table></div>' + moneyAbroadHTML(P) + faithsHTML();
 }
 // What moves between realms: payments for goods, loans and their interest, money sent home, tribute, reparations and aid; and what each money buys of the others.
@@ -607,7 +709,10 @@ function moneyAbroadHTML(P) {
   if (L.length) h += '<h3>Loans between realms</h3><div class="scrollT"><table class="econ"><thead><tr><th>Lender</th><th>Borrower</th><th class="n">Still owed</th><th class="n">Rate</th><th>Since</th><th>State</th></tr></thead><tbody>' + L.slice(0, 14).map(l => { const a = W.polities[l.from], b = W.polities[l.to]; return '<tr><td><i style="background:' + a.color + '"></i>' + esc(a.name) + '</td><td><i style="background:' + b.color + '"></i>' + esc(b.name) + '</td><td class="n">' + fmt(Math.round(l.left)) + ' ' + esc(a.cur.name) + '</td><td class="n">' + Math.round(l.rate * 100) + '%</td><td>Year ' + l.start + '</td><td>' + (l.missed ? 'Behind on payments' : 'Paying') + '</td></tr>'; }).join('') + '</tbody></table></div>';
   return h;
 }
-const fxFmt = v => v >= 100 ? fmt(Math.round(v)) : v >= 1 ? v.toFixed(2) : v >= 0.01 ? v.toFixed(3) : v.toExponential(1);
+// Exchange rates and coin values: three significant figures however small (0.00000123), never 0.00; past a billionth it's '1/4.2 billion'.
+const BIG_WORDS = [[1e18, 'quintillion'], [1e15, 'quadrillion'], [1e12, 'trillion'], [1e9, 'billion'], [1e6, 'million']];
+const bigWords = v => { for (const [n, w] of BIG_WORDS) if (v >= n) return (v / n < 100 ? (v / n).toFixed(1) : fmt(v / n)) + ' ' + w; return fmt(v); };
+const fxFmt = v => !(v > 0) ? '0' : v >= 1e6 ? bigWords(v) : v >= 100 ? fmt(Math.round(v)) : v >= 1 ? v.toFixed(2) : v >= 1e-9 ? v.toFixed(Math.min(11, 2 - Math.floor(Math.log10(v)))).replace(/(.d*?[1-9])0+$/, '$1') : '1/' + bigWords(1 / v);
 function faithsHTML() {
   const F = (W.faiths || []).slice();
   const seen = new Map();

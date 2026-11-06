@@ -441,13 +441,14 @@ function fund(t, cost) {
   t.cash += a;  // the builders spend it here
 }
 // A person's purse: paid by job and skill, spends most of it, and the lucky ones pass some on.
+const IX_WELFARE = TECH_IX.welfare, IX_INCTAX = TECH_IX.incometax;
 function personMoney(p) {
   const t = p.town, cur = t.polity.cur;
   if (cur.kind < 2) return;
   // out of work: nothing, or a little from the state where there's welfare
-  const wage = p.idleY > 0 ? (t.tech[TECH_IX.welfare] ? (t.wage || 0) * 0.3 : 0) : (t.wage || 0) * occPayOf(p) * (1 + Math.min(p.skill, 40) * 0.015) * (p.merc ? 2.5 : 1);
+  const wage = p.idleY > 0 ? (t.tech[IX_WELFARE] ? (t.wage || 0) * 0.3 : 0) : (t.wage || 0) * occPayOf(p) * (1 + Math.min(p.skill, 40) * 0.015) * (p.merc ? 2.5 : 1);
   // an income tax takes its share of every pay packet; before that, the state taxed the town, not the person
-  const net = wage * (1 - (t.tech[TECH_IX.incometax] ? cur.tax * 0.8 : 0));
+  const net = wage * (1 - (t.tech[IX_INCTAX] ? cur.tax * 0.8 : 0));
   const taste = p.traits.includes('greedy') ? 0.7 : p.traits.includes('kind') ? 0.95 : 0.85;
   // savings in a bank earn a little, and lose it all in a run
   const bank = t.count.bank || t.count.exchange ? cur.rate * 0.4 - cur.slump * 0.15 : 0;

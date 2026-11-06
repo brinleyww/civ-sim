@@ -199,8 +199,9 @@ function updatePolities() {
     pol.towns++; pol.pop += n;
     if (!t.nomad) pol.settled++;
     if (n > pol.best) { pol.best = n; pol.capital2 = t; }
-    const kn = pol.know, tt = t.tech;
-    for (let i = 0; i < NT; i++) if (tt[i]) kn[i] = 1;
+    if (pol.know.length < NT) pol.know = fitNT(pol.know, Uint8Array);  // saves from before the new inventions
+    const kn = pol.know, tt = t.tech, K = techCache(t).known;
+    for (let q = 0; q < K.length; q++) if (tt[K[q]]) kn[K[q]] = 1;
     const j = t.jobs, f = pol._fac;
     f[0] += (t.count.palace || 0) * 30 + (t.count.castle || 0) * 30 + n * 0.04;
     f[1] += j[J.TRADE] * 3 + j[J.CRAFT] * 0.8 + j[J.SAILOR] * 1.5 + (t.count.bank || 0) * 10;

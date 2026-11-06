@@ -24,11 +24,12 @@ function snowSweep() {
   const w = W.w, h = W.h;
   let i = W.snowCur || 0;
   // winter in the north is summer in the south
-  let row = -1, sea = 0;
+  let row = -1, sea = 0, cRow = 0;
+  const rain = wx && wx.rain, avg = wx && wx.avg, g6 = wx ? Math.max(wx.gAvg * 0.6, 1e-5) : 0, gw = wx ? wx.gw : 0;
   for (let k = 0; k < per; k++) {
     i++; if (i >= n) i = 0;
     const y = (i / w) | 0;
-    if (y !== row) { row = y; sea = seasonAt(y) + W.clim.t; }
+    if (y !== row) { row = y; sea = seasonAt(y) + W.clim.t; cRow = (y / WX_CELL | 0) * gw; }
     const T = tmp[i] + sea;
     if (water[i]) {
       if (water[i] === 3) continue;
@@ -43,7 +44,11 @@ function snowSweep() {
     if (T < SNOW_LINE) {
       // it snows when the weather brings it: heavy under a storm, hardly at all under clear cold skies
       const rainy = cl[((i / w / h * 10) | 0) * 10 + (((i % w) / w * 10) | 0)] || 1;
-      const now = wx ? 0.3 + wxFall(i) * 0.7 : 1;
+      let now = 1;
+      if (wx) {  // wxFall(i), inlined
+        const c = cRow + ((i - y * w) / WX_CELL | 0), a = avg[c], r = rain[c] / (a > g6 ? a : g6);
+        now = 0.3 + (r > 3 ? 3 : r < 0 ? 0 : r) * 0.7;
+      }
       const fall = (1.5 + wet[i] * 11) * rainy * now * Math.min(1, (SNOW_LINE - T) * 8 + 0.3);
       if (d < 250) S0[i] = Math.min(250, d + Math.ceil(fall));
     } else if (d > 0) {

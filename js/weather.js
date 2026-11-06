@@ -42,6 +42,7 @@ function prevailing(lat, hemi) {
   if (lat < 0.72) return [0.85, -0.1 * hemi];
   return [-0.4, 0.12 * hemi];
 }
+let wxTrig = null, wxEx = null;  // scratch, not saved
 function weatherTick() {
   const wx = W.wx;
   if (!wx) return;
@@ -70,28 +71,42 @@ function weatherTick() {
   }
   // ---- winds ----
   const U = wx.u, V = wx.v, L = wx.lift;
+  // sin/cos of each column's part of the wander, worked out once (angle sums do the rest)
+  let T0 = wxTrig;
+  if (!T0 || T0.length !== gw * 4) {
+    T0 = wxTrig = new Float64Array(gw * 4);
+    for (let cx = 0; cx < gw; cx++) { T0[cx * 4] = Math.sin(cx * 0.37); T0[cx * 4 + 1] = Math.cos(cx * 0.37); T0[cx * 4 + 2] = Math.sin(cx * 0.19); T0[cx * 4 + 3] = Math.cos(cx * 0.19); }
+  }
   for (let cy = 0; cy < gh; cy++) {
     const row = Math.min(h - 1, cy * WX_CELL + 3), lat = W.latRow[row], hemi = row / h < W.eq ? 1 : -1;
-    const [pu, pv] = prevailing(lat, hemi);
-    for (let cx = 0; cx < gw; cx++) {
-      const c = cy * gw + cx;
+    const pu = lat < 0.3 ? -0.55 : lat < 0.72 ? 0.85 : -0.4, pv = (lat < 0.3 ? 0.22 : lat < 0.72 ? -0.1 : 0.12) * hemi;  // prevailing(), without the array
+    const pa = cy * 0.21 + step * 0.013, qa = -cy * 0.33 + step * 0.011, sp = Math.sin(pa), cp = Math.cos(pa), sq = Math.sin(qa), cq = Math.cos(qa);
+    for (let cx = 0, c = cy * gw; cx < gw; cx++, c++) {
+      const k = cx * 4;
       // the wind wanders a little of its own accord
-      U[c] = pu + Math.sin(cx * 0.37 + cy * 0.21 + step * 0.013) * 0.25;
-      V[c] = pv + Math.cos(cx * 0.19 - cy * 0.33 + step * 0.011) * 0.2;
+      U[c] = pu + (T0[k] * cp + T0[k + 1] * sp) * 0.25;           // sin(cx*0.37 + cy*0.21 + step*0.013)
+      V[c] = pv + (T0[k + 3] * cq - T0[k + 2] * sq) * 0.2;        // cos(cx*0.19 - cy*0.33 + step*0.011)
       L[c] = 0;
     }
   }
+  let EX = wxEx;
+  if (!EX || EX.length < gw) EX = wxEx = new Float64Array(gw);
   for (const s of S0) {
     const r = s.r, x0 = Math.max(0, Math.floor(s.x - r * 2)), x1 = Math.min(gw - 1, Math.ceil(s.x + r * 2)), y0 = Math.max(0, Math.floor(s.y - r * 2)), y1 = Math.min(gh - 1, Math.ceil(s.y + r * 2));
-    const hemi = s.y * WX_CELL / h < W.eq ? 1 : -1, spin = s.kind * hemi * s.str;
-    for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) {
-      const dx = cx - s.x, dy = cy - s.y, d2 = dx * dx + dy * dy, fall = Math.exp(-d2 / (r * r));
-      if (fall < 0.05) continue;
-      const c = cy * gw + cx, d = Math.sqrt(d2) + 0.5;
-      // round the centre: lows turn one way, highs the other, and lows draw air in and up
-      U[c] += (-dy / d * spin * 1.4 - dx / d * s.kind * 0.25 * s.str) * fall;
-      V[c] += (dx / d * spin * 1.4 - dy / d * s.kind * 0.25 * s.str) * fall;
-      L[c] += s.kind * s.str * fall * 0.55;
+    const hemi = s.y * WX_CELL / h < W.eq ? 1 : -1, spin = s.kind * hemi * s.str, r2 = r * r;
+    for (let cx = x0; cx <= x1; cx++) { const dx = cx - s.x; EX[cx] = Math.exp(-dx * dx / r2); }  // the falloff splits into a row part and a column part
+    for (let cy = y0; cy <= y1; cy++) {
+      const dy = cy - s.y, ey = Math.exp(-dy * dy / r2);
+      if (ey < 0.05) continue;
+      for (let cx = x0; cx <= x1; cx++) {
+        const dx = cx - s.x, d2 = dx * dx + dy * dy, fall = EX[cx] * ey;
+        if (fall < 0.05) continue;
+        const c = cy * gw + cx, d = Math.sqrt(d2) + 0.5;
+        // round the centre: lows turn one way, highs the other, and lows draw air in and up
+        U[c] += (-dy / d * spin * 1.4 - dx / d * s.kind * 0.25 * s.str) * fall;
+        V[c] += (dx / d * spin * 1.4 - dy / d * s.kind * 0.25 * s.str) * fall;
+        L[c] += s.kind * s.str * fall * 0.55;
+      }
     }
   }
   // ---- the air moves: carry damp and cloud downwind ----

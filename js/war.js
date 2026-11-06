@@ -1444,7 +1444,7 @@ function annex(t, pol) {
   }
 }
 function stealMilitary(from, to, chance) {
-  for (let i = 0; i < NT; i++) {
+  for (const i of techCache(from).known) {
     const T = TECHS[i];
     if (!T.mil || !from.tech[i] || to.tech[i] || !eligible(to, T)) continue;
     if (rnd() < chance) {

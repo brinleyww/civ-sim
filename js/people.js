@@ -16,7 +16,7 @@ function newPerson(town, sex, age, mom, dad) {
     // the last few are for war: what they carry, how they're holding up, who they're fighting right now
     unit: null, side: null, foe: null, atkT: -99, hitT: -99, fx: 0, fy: 0, face: 1, stam: 100, mor: 60, ammo: 0, wound: 0, bleed: 0, flee: false, down: false, slotX: 0, slotY: 0, shield: false, sinceHit: 0, killer: '', game: 0, pk: 0, pow: false, cash: 0, fam: '', merc: false, origin: town.polity ? town.polity.id : -1,
     // working life: the trade they follow, how far they were schooled, and how long they've been out of work
-    occ: -1, edu: -1, idleY: 0, lostOcc: -1, boat: 0,
+    occ: -1, edu: -1, idleY: 0, lostOcc: -1, boat: 0, pw: -1, pwAt: -1,
     // city life: the workplace they go back to, whether they own a car, and where it is parked by day
     workB: null, car: 0, parkB: null,
     // schooling: the stage they are at now (index + 1), years into it, what they did before (stage, years, outcome, year), and whether they read
@@ -27,7 +27,7 @@ function newPerson(town, sex, age, mom, dad) {
   if (mom && mom.cash > 0) p.cash = mom.cash * 0.1;
   p.hp = p.hpMax;
   p.spd = walkSpeed(p);
-  W.people.push(p);
+  W.people.push(p); lodSlot(p.ix, p.id);
   town.members.push(p);
   return p;
 }
@@ -35,7 +35,7 @@ function killPerson(p, cause) {
   if (!p.alive) return;
   p.alive = false; p.cause = cause;
   const P = W.people, last = P.pop();
-  if (last !== p) { P[p.ix] = last; last.ix = p.ix; }
+  if (last !== p) { P[p.ix] = last; last.ix = p.ix; lodSlot(p.ix, last.id); }
   const t = p.town, M = t.members, lastM = M.pop();
   if (lastM !== p) { M[p.mi] = lastM; lastM.mi = p.mi; }
   if (p.aboard) { const q = p.aboard.pass.indexOf(p); if (q >= 0) p.aboard.pass.splice(q, 1); p.aboard = null; }
@@ -213,17 +213,22 @@ function widenRoad(i, town, v) {
 }
 function walk(p, to, nextStep, mode) {
   if (p.mv > 0) settle(p);
-  if (p.ti === to) { p.step = nextStep; p.st = 0; p.wake = W.tick; return; }
-  if (!mode && !inView(p.ti) && !inView(to) && !p.town.attack && !W.water[p.ti] && !W.water[to] && W.landId[p.ti] === W.landId[to] && quietWalk(p, to)) { p.step = nextStep; p.hidden = false; return; }
+  if (p.ti === to) { p.pw = -1; p.step = nextStep; p.st = 0; p.wake = W.tick; return; }
+  // the search was busy last time, from this same spot to this same goal: the quick ways failed then and would again,
+  // and while this tick's searching is spent there is nothing to do but wait a little longer
+  const again = p.pw === to && p.pwAt === p.ti;
+  if (again && nodeBudget <= 0) { p.wake = W.tick + 1 + rint(4); return; }
+  p.pw = -1;
+  if (!again && !mode && !inView(p.ti) && !inView(to) && !p.town.attack && !W.water[p.ti] && !W.water[to] && W.landId[p.ti] === W.landId[to] && quietWalk(p, to)) { p.step = nextStep; p.hidden = false; return; }
   // short trips across open ground need no search at all: most of a day's walking is next door
-  if (!mode && straightWalk(p, to)) { p.step = nextStep; p.hidden = false; return; }
+  if (!again && !mode && straightWalk(p, to)) { p.step = nextStep; p.hidden = false; return; }
   const cls = mode ? 0 : p.town.trans + (p.town.mod.rail ? 8 : 0);
   let path = findPath(p.ti, to, mode || 0, cls);
-  if (path === PATH_BUSY) { p.wake = W.tick + 1 + rint(4); return; }
+  if (path === PATH_BUSY) { p.pw = to; p.pwAt = p.ti; p.wake = W.tick + 1 + rint(4); return; }
   if (!path) {
     // walled in by buildings: squeeze through, rather than stand there for ever
     if (!mode) path = findPath(p.ti, to, 8, cls);
-    if (path === PATH_BUSY) { p.wake = W.tick + 1 + rint(4); return; }
+    if (path === PATH_BUSY) { p.pw = to; p.pwAt = p.ti; p.wake = W.tick + 1 + rint(4); return; }
     if (!path) { endTask(p, 12); return; }
   }
   p.step = nextStep; p.hidden = false;
@@ -300,7 +305,7 @@ function feelWay(p, a, to, ax, ay, bx, by, n) {
   return true;
 }
 const nearLand = i => { for (let k = 0; k < 8; k++) { const j = i + NB_D[k]; if (j > 0 && !W.water[j] && W.occ[j] !== 1 && !W.canal[j]) return j; } return i; };
-function endTask(p, wait) { if (p.boat) returnBoat(p); p.task = 0; p.step = 0; p.obj = null; p.st = 0; p.wake = W.tick + (wait || 0); }
+function endTask(p, wait) { if (p.boat) returnBoat(p); p.pw = -1; p.task = 0; p.step = 0; p.obj = null; p.st = 0; p.wake = W.tick + (wait || 0); }
 function workFor(p, ticks, nextStep, hidden) { p.st = 2; p.wake = W.tick + Math.max(1, ticks | 0); p.step = nextStep; p.hidden = !!hidden; }
 
 function depotFor(p) {
@@ -431,16 +436,21 @@ function gatherStep(p) {
         if (to < 0) { to = siteNear(t.sFish, p, hasFishLand); mode = 0; }
         break;
       case J.MINE: {
-        const M = t.mines.filter(b => b.done && W.oreAmt[b.i] > 0 && t.stock[oreRes(W.ore[b.i])] < wantOf(t, oreRes(W.ore[b.i])) * 1.5);
-        if (M.length) { const b = pick(M); p.obj = b; to = b.i; }
+        // a random one of the mines still worth working, picked without making a list of them
+        const M = t.mines, ok = b => b.done && W.oreAmt[b.i] > 0 && t.stock[oreRes(W.ore[b.i])] < wantOf(t, oreRes(W.ore[b.i])) * 1.5;
+        let n = 0;
+        for (let k = 0; k < M.length; k++) if (ok(M[k])) n++;
+        if (n) { let r = Math.floor(rnd() * n); for (let k = 0; k < M.length; k++) if (ok(M[k]) && r-- === 0) { p.obj = M[k]; to = M[k].i; break; } }
         break;
       }
     }
     if (to < 0) { p.sideJ = 0; p.obj = null; p.task = 0; return sideJobOnce(p); }
-    p.tgt = to;
-    if (mode) { const bs = boatStore(t); p.sea = 1; walk(p, bs ? bs.i : t.portB, 4, 0); return; }
-    p.sea = 0;
-    walk(p, to, 1, 0);
+    p.tgt = to; p.sea = mode ? 1 : 0;
+    p.step = 6;  // the spot is chosen (and any boat taken): a busy search only means walking there a little later
+  }
+  if (p.step === 6) {
+    if (p.sea) { const bs = boatStore(t); walk(p, bs ? bs.i : t.portB, 4, 0); }
+    else walk(p, p.tgt, 1, 0);
     return;
   }
   if (p.step === 4) { walk(p, p.tgt, 1, 1); return; }
@@ -449,9 +459,8 @@ function gatherStep(p) {
     workFor(p, dur, 2, j === J.MINE);
     return;
   }
-  if (p.step === 2) {
-    harvest(p, j);
-    p.hidden = false;
+  if (p.step === 2) { harvest(p, j); p.hidden = false; p.step = 5; }
+  if (p.step === 5) {  // home with the load (again, if the search was busy: the harvest is in hand already)
     if (W.water[p.ti]) { const bs = boatStore(t), back = bs ? bs.i : t.portLv && portOf(t) >= 0 ? t.portB : depotFor(p); walk(p, back, 3, 1); }
     else walk(p, depotFor(p), 3, 0);
     return;
@@ -576,10 +585,11 @@ function farmStep(p) {
     if (planting && p.cnt < 6) { p.step = 0; p.st = 0; p.wake = W.tick; return; }
     if (!planting && p.cnt < 2 + t.mod.fields) { p.step = 0; p.st = 0; p.wake = W.tick; return; }
     didWork(p, J.FARM);
-    if (p.carry > 0) { walk(p, depotFor(p), 3); return; }
+    if (p.carry > 0) { p.step = 4; walk(p, depotFor(p), 3); return; }
     endTask(p);
     return;
   }
+  if (p.step === 4) { walk(p, depotFor(p), 3); return; }  // the search was busy last time
   deposit(p); endTask(p);
 }
 function clearStep(p) {
@@ -631,9 +641,9 @@ function herdStep(p) {
       if (knows(t, 'weaving')) t.stock[R.CLOTH] += 0.3;
     }
     didWork(p, J.HERD);
-    walk(p, depotFor(p), 3);
-    return;
+    p.step = 4;
   }
+  if (p.step === 4) { walk(p, depotFor(p), 3); return; }
   deposit(p); endTask(p);
 }
 
@@ -928,9 +938,10 @@ function gardenStep(p) {
     if (p.cnt < 4 && (p.carry < 16)) { p.step = 0; p.st = 0; p.wake = W.tick; return; }
     didWork(p, J.GARDEN);
     p.skill++;
-    if (p.carry > 0) return walk(p, depotFor(p), 3, 0);
+    if (p.carry > 0) { p.step = 4; return walk(p, depotFor(p), 3, 0); }
     return endTask(p);
   }
+  if (p.step === 4) return walk(p, depotFor(p), 3, 0);  // the search was busy last time
   deposit(p); didWork(p, J.GARDEN); endTask(p);
 }
 
@@ -1403,7 +1414,7 @@ function promoteFolk(t, count, adultsOnly) {
 function absorbPerson(p) {
   p.alive = false; p.cause = 'lost in the crowd';
   const P = W.people, last = P.pop();
-  if (last !== p) { P[p.ix] = last; last.ix = p.ix; }
+  if (last !== p) { P[p.ix] = last; last.ix = p.ix; lodSlot(p.ix, last.id); }
   const t = p.town, M = t.members, lastM = M.pop();
   if (lastM !== p) { M[p.mi] = lastM; lastM.mi = p.mi; }
   if (p.home) p.home.res--;
@@ -1504,8 +1515,20 @@ function personYear(p) {
 }
 
 // ---- the tick ----
-let LOD_ID = new Int32Array(0);  // stepWorld's copy of each list slot's person id, and who was in the slot (LOD_OBJ) when it was read
-const LOD_OBJ = [];
+// stepWorld's copy of each list slot's person id, kept in step wherever someone is added or moved (lodSlot), so the turns pass the
+// others over without reaching into the person, or even the list, at all. Rebuilt whole for a new or loaded world, and once a year.
+let LOD_ID = new Int32Array(0), LOD_W = null;
+function lodSlot(k, id) {
+  if (LOD_W !== W) return;
+  if (k >= LOD_ID.length) { const g = new Int32Array(k + 4096); g.set(LOD_ID); LOD_ID = g; }
+  LOD_ID[k] = id;
+}
+function lodRebuild() {
+  const P = W.people, n = P.length;
+  if (LOD_ID.length < n) LOD_ID = new Int32Array(n + 4096);
+  for (let k = 0; k < n; k++) LOD_ID[k] = P[k].id;
+  LOD_W = W;
+}
 function stepWorld() {
   W.tick++;
   const tick = W.tick;
@@ -1528,14 +1551,11 @@ function stepWorld() {
   } else if (!vw) {
     // nobody is on screen to glide (far out, or no screen): only this turn's share is visited. Each slot's id is kept beside the list,
     // so the others are passed over without reaching into the person at all (a slot whose occupant changed is read afresh).
-    if (LOD_ID.length < n0) { const g = new Int32Array(n0 + 4096); g.set(LOD_ID); LOD_ID = g; }
-    const PID = LOD_ID, PO = LOD_OBJ;
-    if (PO.length > n0) PO.length = n0;
+    if (LOD_W !== W || m0 === 0) lodRebuild();
     for (let k = n0 - 1; k >= 0; k--) {
+      if ((LOD_ID[k] + tick) % turn !== 0) continue;
       const p = P[k];
-      let id;
-      if (PO[k] === p) id = PID[k]; else { PO[k] = p; id = PID[k] = p.id; }
-      if ((id + tick) % turn !== 0) continue;
+      if (!p) continue;  // the list shrank under us this tick
       if (p.st === 1) { p.mv += p.spd * turn; while (p.st === 1 && p.mv >= p.need) stepTile(p); }
       else { if (p.mv > 0) settle(p); if (tick >= p.wake) think(p); }
       if ((p.id + m0) % TPY === 0 && p.alive) personYear(p);
@@ -1690,7 +1710,7 @@ function spawnTribe(i, count) {
   const pol = newPolity(c);
   const t = newTown(pol, c, i, true);
   for (let k = 0; k < NT; k++) if (TECHS[k].start) t.tech[k] = 1;
-  recomputeMods(t);
+  techDirty(t); recomputeMods(t);
   t.arsenal[1] = 0;
   t.stock[R.FOOD] = count * 14; t.stock[R.WOOD] = 12;
   for (let k = 0; k < count; k++) {

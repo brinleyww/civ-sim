@@ -82,33 +82,21 @@ function applyFx(m, fx, times) {
 }
 function recomputeMods(t) {
   const m = t.mod;
-  for (const k of MOD_MUL) m[k] = 1;
-  m.sail = 0; m.trans = 0; m.ski = 0; m.plough = 0; m.ev = 0; m.locks = 0; m.tier = 0; m.fields = 0; m.admin = 0; m.paved = 0; m.planned = 0; m.keep = 0; m.rail = 0; m.car = 0; m.plane = 0; m.urban = 0; m.happy = 0; m.order = 0; m.morale = 0; m.relief = 0;
-  for (let i = 0; i < NT; i++) {
-    if (!t.tech[i]) continue;
-    const fx = TECHS[i].fx; if (fx) applyFx(m, fx);
-  }
+  // every invention's fx, kept added up in the town's tech index (rebuilt if anything was forgotten behind its back)
+  let C = techCache(t);
+  for (let q = 0, K = C.known; q < K.length; q++) if (!t.tech[K[q]]) { techDirty(t); C = techCache(t); break; }
+  const X = C.fx; for (const k in X) m[k] = X[k];
+  if (typeof discoveryFx === 'function') discoveryFx(t, m);  // js/discovery.js: inputs to hand, golden and dark ages
   // what the realm has become, then what this town has actually built
   if (t.polity && t.polity.fx) applyFx(m, t.polity.fx);
   if (t.polity && t.polity.geoFx) applyFx(m, t.polity.geoFx);
   if (t.polity && t.polity.revFx) applyFx(m, t.polity.revFx);
   if (t.faith >= 0 && W.faiths && W.faiths[t.faith]) applyFx(m, faithFx(W.faiths[t.faith]));
-  let fort = t.walls ? (WALL_KIND[t.wallKind] || WALL_KIND[2]).fort : 0;
-  for (let q = 0; q < BLD_FX.length; q++) {
-    const id = BLD_FX[q], c = t.count[id];
-    if (!c) continue;
-    const def = BLD[id];
-    if (def.fx) applyFx(m, def.fx);
-    if (def.urban) m.urban += def.urban * c;
-    if (def.happy) m.happy += def.happy * c;
-    if (def.order) m.order += def.order * c;
-    if (def.fort) fort += def.fort * c;
-    if (def.morale) m.morale += def.morale;
-  }
+  const B = bldMods(t);
+  applyFx(m, B.fx);
+  const fort = (t.walls ? (WALL_KIND[t.wallKind] || WALL_KIND[2]).fort : 0) + B.fort;
   t.fortMax = fort;
-  // how many people the town's healers can look after, and how much good it does them
-  let care = 0; for (let q = 0; q < CARE_BLDS.length; q++) { const c = t.count[CARE_BLDS[q]]; if (c) care += BLD[CARE_BLDS[q]].care * c; }
-  t.care = care;
+  t.care = B.care;  // how many people the town's healers can look after
   const K = id => t.tech[TECH_IX[id]];
   t.medQ = K('nanomed') ? 0.62 : K('pharma') ? 0.52 : K('antibiotics') ? 0.44 : K('nursing') ? 0.34 : K('sanitation') ? 0.3 : K('anatomy') ? 0.2 : K('hospitals') ? 0.16 : K('medicine') ? 0.13 : K('herbs') ? 0.07 : 0.03;
   if (fort > 0 && t.fortHP === 0 && !t.attack) t.fortHP = fort;
@@ -120,7 +108,41 @@ function recomputeMods(t) {
   if (t.eduR && t.eduR !== 1) m.research *= t.eduR;  // graduates and good schools make inventors
   if (t.parkQ !== undefined && t.parkQ < 1) m.trade *= 0.95 + 0.05 * t.parkQ;  // drivers circling for a space, deliveries double-parked
   if (t.deskQ && t.deskQ < 1) { m.trade *= 0.9 + 0.1 * t.deskQ; m.research *= 0.92 + 0.08 * t.deskQ; }  // clerks in corridors: short of office space
-  portStats(t);
+}
+// The buildings' share of a town's mods, added up once and kept until a building is finished or pulled down (both drop it), a quay
+// is rebuilt (bumps t.hbV) or the town starts over (a fresh t.count). Transient, never saved.
+const BLD_MODS = new WeakMap();
+const bldModsDirty = t => BLD_MODS.delete(t);
+function fxJoin(acc, fx) {  // the same rules as applyFx, gathered into one fx to apply later
+  for (const k in fx) {
+    const v = fx[k];
+    if (k === 'sail' || k === 'trans') acc[k] = acc[k] === undefined ? v : Math.max(acc[k], v);
+    else if (MOD_ADD[k]) acc[k] = (acc[k] || 0) + v;
+    else if (k === 'paved' || k === 'planned' || k === 'keep' || k === 'rail' || k === 'car' || k === 'plane' || k === 'ski' || k === 'plough' || k === 'ev' || k === 'locks') acc[k] = 1;
+    else acc[k] = (acc[k] === undefined ? 1 : acc[k]) * v;
+  }
+}
+function bldMods(t) {
+  let B = BLD_MODS.get(t);
+  if (B && B.cnt === t.count && B.hb === t.hbV) return B;
+  const fx = {}, cnt = t.count;
+  let fort = 0, care = 0;
+  for (let q = 0; q < BLD_FX.length; q++) {
+    const id = BLD_FX[q], c = cnt[id];
+    if (!c) continue;
+    const def = BLD[id];
+    if (def.fx) fxJoin(fx, def.fx);
+    if (def.urban) fx.urban = (fx.urban || 0) + def.urban * c;
+    if (def.happy) fx.happy = (fx.happy || 0) + def.happy * c;
+    if (def.order) fx.order = (fx.order || 0) + def.order * c;
+    if (def.fort) fort += def.fort * c;
+    if (def.morale) fx.morale = (fx.morale || 0) + def.morale;
+  }
+  for (let q = 0; q < CARE_BLDS.length; q++) { const c = cnt[CARE_BLDS[q]]; if (c) care += BLD[CARE_BLDS[q]].care * c; }
+  B = { cnt, hb: t.hbV, fx, fort, care };
+  BLD_MODS.set(t, B);
+  portStats(t);  // harbour level, yards and navy hang on the same counts
+  return B;
 }
 // The share of a town that its healers can actually reach, counting the beds in its buildings and the people who do the caring.
 const careCover = t => { const c = (t.care + t.jobs[J.SERVICE] * t.scale * 20) / Math.max(tn(t), 1); return c > 1 ? 1 : c; };
@@ -435,7 +457,7 @@ function removeBuilding(b) {
     const drop = a => { const k = a.indexOf(b); if (k >= 0) a.splice(k, 1); };
     drop(t.blds); drop(t.houses); drop(t.queue); drop(t.mines); drop(t.crafts); drop(t.studies); drop(t.services); drop(t.depots); drop(t.ports); drop(t.forts);
     if (b.type === 'house') { t.cap -= HOUSES[b.tier].cap; for (const p of t.members) if (p.home === b) p.home = null; }
-    else if (b.done && t.count[b.type]) t.count[b.type]--;
+    else if (b.done && t.count[b.type]) { t.count[b.type]--; bldModsDirty(t); }
     else if (!b.done && t.count['q_' + b.type]) t.count['q_' + b.type]--;
     const def = BLD[b.type];
     if (def && def.store && b.done) t.storeBonus = (t.storeBonus || 0) - def.store;
@@ -454,7 +476,7 @@ function finishBuilding(b) {
   b.done = true;
   if (b.type === 'house') { t.houses.push(b); t.cap += HOUSES[b.tier].cap; return; }
   const def = BLD[b.type];
-  t.count[b.type] = (t.count[b.type] || 0) + 1;
+  t.count[b.type] = (t.count[b.type] || 0) + 1; bldModsDirty(t);
   if (t.count['q_' + b.type]) t.count['q_' + b.type]--;
   if (def.port) { t.ports.push(b); t.portI = -1; t.hbV = (t.hbV || 0) + 1; }
   if (def.fort || MIL_BASE[b.type]) t.forts.push(b);  // where standing soldiers drill and muster
@@ -482,7 +504,7 @@ function finishBuilding(b) {
   if (b.type === 'cathedral') chronT('wonder', `After generations of work, the great cathedral of ${t.name} is finished.`, t);
 }
 const dirtyB = b => { for (let dy = 0; dy < b.size; dy++) for (let dx = 0; dx < b.size; dx++) dirty(b.i + dx + dy * W.w); };
-function maxEra(t) { let e = 0; for (let i = 0; i < NT; i++) if (t.tech[i] && TECHS[i].era > e) e = TECHS[i].era; return e; }
+function maxEra(t) { return techCache(t).era; }
 
 function buildable(i, size, allowFields, allowPaths) {
   const w = W.w;
@@ -512,7 +534,18 @@ function hasAccess(i, size) {
   return free >= Math.max(3, size * 2 + 1);
 }
 // Older quarters grow organically round the centre; once Engineering arrives new streets follow a grid.
+// A search that found nothing finds nothing again the same tick (planBuildings asks once per kind of building): remember the misses.
+const FS_MISS = new Set(), FS_KIND = { shore: 1, river: 2, far: 3, stone: 4, ore: 5 };
+let FS_TICK = -1;
 function findSpot(t, size, kind, pref) {
+  if (FS_TICK !== W.tick) { FS_MISS.clear(); FS_TICK = W.tick; }
+  const mk = t.id * 1024 + size * 16 + (kind ? FS_KIND[kind] || 7 : 0) * 2 + (pref > 0 ? 1 : 0);
+  if (FS_MISS.has(mk)) return -1;
+  const best = findSpot0(t, size, kind, pref);
+  if (best < 0) FS_MISS.add(mk);
+  return best;
+}
+function findSpot0(t, size, kind, pref) {
   const w = W.w, n = tn(t);
   const r0 = 2 + Math.sqrt(t.blds.length + n * 0.1 + 12) * 0.85;
   let best = -1, bestS = -1e9;
@@ -646,6 +679,10 @@ function bestHouse(t) {
   }
   return -1;
 }
+const Q_KEY = {}; for (const k in BLD) Q_KEY[k] = 'q_' + k;  // t.count's key for one queued, built once
+// each building's tech as an index, in build order; made on first use since other files still reorder BUILD_ORDER as they load
+const ordTix = L => Int32Array.from(L, id => BLD[id].tech ? (TECH_IX[BLD[id].tech] === undefined ? NT : TECH_IX[BLD[id].tech]) : -1);
+const ORD_TIX = { bo: [], uo: [] };
 function planBuildings(t) {
   const n = tn(t), st = t.stock;
   if (!n) return;
@@ -667,11 +704,12 @@ function planBuildings(t) {
   if (t.nomad) return;
   // a crowded town builds what lets it hold more people before anything else
   let picks = 1 + Math.floor(n / 500);
-  const tryBuild = id => {
+  const tech = t.tech;
+  const tryBuild = (id, tix) => {
+    if (tix >= 0 && tech[tix] !== 1) return false;  // knows(t, def.tech), looked up once
     const def = BLD[id];
-    if (def.tech && !knows(t, def.tech)) return false;
-    const have = (t.count[id] || 0) + (t.count['q_' + id] || 0);
-    if (have >= Math.min(def.want(t), def.urban ? 99 : def.craft ? 12 : 6)) return false;
+    const qk = Q_KEY[id] || 'q_' + id, have = (t.count[id] || 0) + (t.count[qk] || 0);
+    if (have >= (def.urban ? 99 : def.craft ? 12 : 6) || have >= def.want(t)) return false;  // the cheap cap before want()
     const cost = canPay(st, def.cost) ? def.cost : (def.altCost && canPay(st, def.altCost)) ? def.altCost : null;
     if (!cost || !canFund(t, def.work)) return false;
     const i = findSpot(t, def.size, def.place, landPrefOf(id, 0, t));
@@ -679,11 +717,13 @@ function planBuildings(t) {
     pay(st, cost);
     fund(t, def.work);
     addBuilding(t, id, i, null);
-    t.count['q_' + id] = (t.count['q_' + id] || 0) + 1;
+    t.count[qk] = (t.count[qk] || 0) + 1;
     return true;
   };
-  if (t.crowd > 0.85) for (let k = 0; k < URBAN_ORDER.length && t.queue.length < maxQ && picks > 0; k++) if (tryBuild(URBAN_ORDER[k])) picks--;
-  for (let k = 0; k < BUILD_ORDER.length && t.queue.length < maxQ && picks > 0; k++) if (tryBuild(BUILD_ORDER[k])) picks--;
+  if (ORD_TIX.bo.length !== BUILD_ORDER.length || ORD_TIX.uo.length !== URBAN_ORDER.length) { ORD_TIX.bo = ordTix(BUILD_ORDER); ORD_TIX.uo = ordTix(URBAN_ORDER); }
+  const BT = ORD_TIX.bo, UT = ORD_TIX.uo;
+  if (t.crowd > 0.85) for (let k = 0; k < URBAN_ORDER.length && t.queue.length < maxQ && picks > 0; k++) if (tryBuild(URBAN_ORDER[k], UT[k])) picks--;
+  for (let k = 0; k < BUILD_ORDER.length && t.queue.length < maxQ && picks > 0; k++) if (tryBuild(BUILD_ORDER[k], BT[k])) picks--;
   // mines on deposits within reach
   if (t.queue.length < maxQ && t.sOre.length && tn(t) >= 25) planMine(t);
 }
@@ -727,9 +767,48 @@ function upgradeHouses(t) {
   }
 }
 // ---- inventions and how they spread ----
+// Each town's tech index: what it knows, the fx of all that added up, its latest age, and the frontier (ideas not known whose
+// every prerequisite is). Transient, kept in a WeakMap so it is never saved; built on first use, and again after a forgetting.
+const TECH_KIDS = Array.from({ length: NT }, () => []);
+for (const T of TECHS) for (const r of T.reqIx) TECH_KIDS[r].push(T.ix);
+const NT_INV = TECHS.filter(T => !T.start).length;
+const TECH_IDX = new WeakMap();
+const fitNT = (a, Ty) => { if (a && a.length >= NT) return a; const b = new Ty(NT); if (a) b.set(a); return b; };  // saves from before the new inventions
+function canStudy(t, i) {
+  const T = TECHS[i];
+  if (!T.dom || T.start || t.tech[i]) return false;
+  for (const r of T.reqIx) if (!t.tech[r]) return false;
+  return true;
+}
+function techCache(t) {
+  let C = TECH_IDX.get(t);
+  if (C && C.tech === t.tech) return C;
+  if (t.tech.length < NT) { t.tech = fitNT(t.tech, Uint8Array); t.prog = fitNT(t.prog, Float32Array); }
+  const m = {}, tech = t.tech;
+  for (const k of MOD_MUL) m[k] = 1;
+  m.sail = 0; m.trans = 0; m.ski = 0; m.plough = 0; m.ev = 0; m.locks = 0; m.tier = 0; m.fields = 0; m.admin = 0; m.paved = 0; m.planned = 0; m.keep = 0; m.rail = 0; m.car = 0; m.plane = 0; m.urban = 0; m.happy = 0; m.order = 0; m.morale = 0; m.relief = 0;
+  C = { tech, known: [], front: [], inF: new Uint8Array(NT), fx: m, era: 0 };
+  for (let i = 0; i < NT; i++) {
+    if (tech[i]) { C.known.push(i); const T = TECHS[i]; if (T.fx) applyFx(m, T.fx); if (T.era > C.era) C.era = T.era; }
+    else if (canStudy(t, i)) { C.inF[i] = 1; C.front.push(i); }
+  }
+  TECH_IDX.set(t, C);
+  return C;
+}
+const techDirty = t => TECH_IDX.delete(t);  // call after writing t.tech other than through learn()
+function techGain(t, ix) {  // learn()'s hook: keeps the index in step
+  const C = TECH_IDX.get(t);
+  if (!C || C.tech !== t.tech) return;
+  const T = TECHS[ix];
+  C.known.push(ix);
+  if (T.fx) applyFx(C.fx, T.fx);
+  if (T.era > C.era) C.era = T.era;
+  for (const k of TECH_KIDS[ix]) if (!C.inF[k] && canStudy(t, k)) { C.inF[k] = 1; C.front.push(k); }
+}
 function learn(t, ix, quiet) {
   if (t.tech[ix]) return;
   t.tech[ix] = 1;
+  techGain(t, ix);
   recomputeMods(t);
   const T = TECHS[ix];
   if (T.id === 'agriculture') settleCrop(t);
@@ -784,14 +863,18 @@ function discover(t, T) {
   if (first) {
     W.firsts[T.id] = { year: Math.floor(year()), town: t.name, who: who ? who.name : 'unknown', polity: pol.name, pid: pol.id, x: t.x, y: t.y };
     W.eraNow = eraOfKnown(X => X.start || W.firsts[X.id]);
+    if (typeof discoverHook === 'function') discoverHook(t, T, who, true);  // js/discovery.js: names the inventor, puts the idea "in the air"
     if (T.id === 'agriculture') {
       const c = t.near.wildBest || 1;
       chronT('tech', `${who ? who.name + ' of ' : 'People at '}${t.name} sow the first deliberate field of ${CROPS[c].name}. Agriculture is born.`, t);
     } else {
-      chronT('tech', `${who ? who.name + ' of ' : 'People at '}${t.name} ${pick(['invents', 'devises', 'discovers', 'works out'])}: ${T.name}.${why ? ' ' + why : ''}`, t);
+      const jw = who && who.job > J.ELDER ? JOB_NAME[who.job].toLowerCase() : '';
+      chronT('tech', `${who ? who.name + (jw ? `, ${/^[aeiou]/.test(jw) ? 'an' : 'a'} ${jw} of ${t.name},` : ' of ' + t.name) : 'People at ' + t.name} ${pick(['invents', 'devises', 'discovers', 'works out'])}: ${T.name}.${why ? ' ' + why : ''}`, t);
     }
   } else if (realmFirst && tn(t) > 20) {
-    chronT('spread', `${t.name} works out ${T.name} for itself${why ? '. ' + why : '.'}`, t);
+    // independent discovery: the same idea turning up far apart within a few years
+    const f = W.firsts[T.id], yrs = f ? Math.floor(year()) - f.year : 99;
+    chronT('spread', f && !T.side && f.pid !== pol.id && yrs <= 10 ? `${t.name} works out ${T.name} on its own, ${yrs ? yrs + (yrs === 1 ? ' year after ' : ' years after ') : 'in the same year as '}${f.town} in ${f.polity}.` : `${t.name} works out ${T.name} for itself${why ? '. ' + why : '.'}`, t);
   }
   if (realmFirst) pol.firsts[T.id] = Math.floor(year());
   if (T.id === 'agriculture') {
@@ -836,13 +919,19 @@ function tryInvent(t) {
   let total = 0;
   for (let j = J.FORAGE; j < J.N; j++) total += act[j];
   if (total > 0) {
-    const L = lettersFor(t);
-    for (let i = 0; i < NT; i++) {
+    // only the frontier: ideas not known whose every prerequisite is; anything learned meanwhile drops out as we pass
+    const L = lettersFor(t), C = techCache(t), F = C.front, tech = t.tech, prog = t.prog;
+    let n = 0;
+    for (let k = 0; k < F.length; k++) {
+      const i = F[k];
+      if (tech[i]) { C.inF[i] = 0; continue; }
+      F[n++] = i;
       const T = TECHS[i];
-      if (!T.dom || !eligible(t, T)) continue;
-      t.prog[i] += researchPts(t, T, total, L);
-      if (t.prog[i] >= inventCost(t, T)) discover(t, T);
+      if (T.cond && !T.cond(t)) continue;  // on the frontier, so the rest of eligible() holds
+      prog[i] += researchPts(t, T, total, L);
+      if (prog[i] >= inventCost(t, T)) discover(t, T);
     }
+    F.length = n;
   }
   t.lastAct = act.slice();
   t.lastTotal = total;
@@ -907,10 +996,12 @@ function teach(from, to, rate) {
   const sr = rate * Math.max(from.mod.spread, 1) * (from.mod.keep ? 1.6 : 1);
   // seed travels with the know-how, if it can grow here
   if (from.crop && !to.crop && cropSuit(from.crop, to.i) > 0.25 && knows(to, 'agriculture')) to.crop = from.crop;
-  for (let i = 0; i < NT; i++) {
-    if (!from.tech[i] || to.tech[i]) continue;
+  const K = techCache(from).known, inF = techCache(to).inF;
+  for (let q = 0; q < K.length; q++) {
+    const i = K[q];
+    if (to.tech[i] || !inF[i] || !from.tech[i]) continue;  // inF: every prerequisite known, as eligible() would check
     const T = TECHS[i];
-    if (T.start || !eligible(to, T)) continue;
+    if (T.cond && !T.cond(to)) continue;
     if (rnd() < sr) {
       learn(to, i);
       if (to.crop === 0 && T.id === 'agriculture') settleCrop(to);
@@ -929,6 +1020,7 @@ function willShare(seller, buyer, T) {
   if (T.mil) p *= allied ? 0.4 : 0.08;
   p *= seller.mod.share || 1;
   p *= 1 + Math.min(buyer.needs[T.tagI], 3) * 0.5;
+  if (typeof shareMul === 'function') p *= shareMul(seller, buyer, T);  // js/discovery.js: secrets, patents, faith and trade links
   const g = GOV[a.gov];
   if (g.id === 'despotism' || g.id === 'junta') p *= 0.5;
   if (a.ruler && a.ruler.alive) { if (hasTrait(a.ruler, 'greedy')) p *= 0.7; if (hasTrait(a.ruler, 'kind')) p *= 1.2; }
@@ -936,10 +1028,19 @@ function willShare(seller, buyer, T) {
 }
 const TECH_PRICE = T => (T.era + 1) * (T.era + 1) * 1.6 * (T.mil ? 2 : 1);
 const PAY_WITH = [[R.GEMS, 10], [R.GOLD, 8], [R.GOODS, 2], [R.TOOLS, 2], [R.CLOTH, 1.5], [R.BRONZE, 3], [R.STEEL, 3], [R.FOOD, 0.25]];
+const TK_POOL = [], TK_SIDE = [];
 function tradeKnowledge(seller, buyer) {
   // the big ideas are what people cross borders to buy: the age-making ones come up far more often than the side crafts
-  const pool = [], side = [];
-  for (let i = 0; i < NT; i++) if (seller.tech[i] && !buyer.tech[i] && !TECHS[i].start && eligible(buyer, TECHS[i])) (TECHS[i].side ? side : pool).push(i);
+  // the buyer's frontier flags (inF) stand in for eligible(): unknown, not a start idea, every prerequisite known; only cond is left
+  const pool = TK_POOL, side = TK_SIDE, K = techCache(seller).known, st = seller.tech, bt = buyer.tech, inF = techCache(buyer).inF;
+  pool.length = 0; side.length = 0;
+  for (let q = 0; q < K.length; q++) {
+    const i = K[q];
+    if (bt[i] || !inF[i] || !st[i]) continue;
+    const T = TECHS[i];
+    if (T.cond && !T.cond(buyer)) continue;
+    (T.side ? side : pool).push(i);
+  }
   if (!pool.length && !side.length) return false;
   const T = TECHS[pool.length && rnd() < pool.length * 3 / (pool.length * 3 + side.length * 0.5) ? pool[rint(pool.length)] : side.length ? side[rint(side.length)] : pool[rint(pool.length)]];
   const allied = areAllies(seller.polity, buyer.polity);
@@ -970,14 +1071,15 @@ function exchange(a, b, via) {
 }
 // Small isolated groups really do forget skills nobody practises (the Tasmania effect).
 function tryForget(t) {
+  if (typeof discoveryYear === 'function') discoveryYear(t);  // js/discovery.js: inputs, spoils of war, golden and dark ages, lost know-how
   const n = tn(t);
   if (n >= 14 || t.mod.keep || rnd() > 0.02) return;
   if (t.polity.towns > 3) return;
-  const ks = []; for (let i = 0; i < NT; i++) if (t.tech[i] && !TECHS[i].start && TECHS[i].era >= 1) ks.push(i);
+  const ks = []; for (const i of techCache(t).known) if (t.tech[i] && !TECHS[i].start && TECHS[i].era >= 1) ks.push(i);
   if (!ks.length) return;
   const ix = pick(ks);
-  if (TECHS.some(T => t.tech[T.ix] && T.reqIx.includes(ix))) return;
-  t.tech[ix] = 0; recomputeMods(t);
+  if (TECH_KIDS[ix].some(k => t.tech[k])) return;
+  t.tech[ix] = 0; techDirty(t); recomputeMods(t);
   if (n > 8 && TECHS[ix].era >= 2) chronT('misc', `The dwindling people of ${t.name} lose the art of ${TECHS[ix].name}.`, t);
 }
 
@@ -1172,7 +1274,7 @@ function tryColonize(t) {
   }
   if (newPol !== pol) { newPol.crops = pol.crops.slice(); adjustRel(pol, newPol, 15); newPol.known[pol.id] = 1; pol.known[newPol.id] = 1; newPol.gov = t.nomad ? 0 : GOV_IX.tribe; }
   const nt = newTown(newPol, culture, site, t.nomad);
-  nt.tech.set(t.tech); nt.prog.set(t.prog); recomputeMods(nt); nt.crop = t.crop;
+  nt.tech.set(t.tech); nt.prog.set(t.prog); techDirty(nt); recomputeMods(nt); nt.crop = t.crop;
   if (!nt.crop && knows(nt, 'agriculture')) settleCrop(nt);
   nt.radius = 13;
   scanTown(nt);

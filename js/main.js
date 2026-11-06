@@ -502,7 +502,7 @@ function powerOnce(p, sx, sy, k) {
       greatFire(t); break;
     case 'inspire':
       if (!t) { toast('No settlement close enough.'); return false; }
-      { const open = TECHS.filter(T => T.dom && eligible(t, T)).sort((a, b) => a.diff - b.diff);
+      { const open = techCache(t).front.map(i => TECHS[i]).filter(T => eligible(t, T)).sort((a, b) => a.diff - b.diff);
         if (!open.length) { toast(`${t.name} has nothing it could work out next.`); return false; }
         discover(t, open[0]); if (Game.n === 1) toast(`Inspiration strikes in ${t.name}: ${open[0].name}.`); }
       break;
@@ -726,11 +726,13 @@ async function hasSave() {
 async function saveGame(quiet) {
   try {
     W.rs = RS;
+    const flat = packWorld(W);  // packed first (see core.js): if that fails, the old save is never touched
     const d = await db();
     await new Promise((ok, no) => {
       const tx1 = d.transaction('saves', 'readwrite');
-      tx1.objectStore('saves').put({ world: W, when: Date.now() }, 'slot1');
-      tx1.oncomplete = ok; tx1.onerror = () => no(tx1.error); tx1.onabort = () => no(tx1.error);
+      tx1.oncomplete = ok; tx1.onerror = () => no(tx1.error); tx1.onabort = () => no(tx1.error || new Error('the save was cancelled'));
+      try { tx1.objectStore('saves').put({ flat, ver: W.ver, when: Date.now() }, 'slot1'); }
+      catch (e) { try { tx1.abort(); } catch (e2) {} no(e); }  // one put in one transaction: the last good save stays as it was
     });
     if (!quiet) toast(`Saved at year ${Math.floor(year())}.`);
   } catch (err) {
@@ -743,9 +745,9 @@ async function loadGame() {
     const d = await db();
     const rec = await new Promise((ok, no) => { const q = d.transaction('saves').objectStore('saves').get('slot1'); q.onsuccess = () => ok(q.result); q.onerror = () => no(q.error); });
     if (!rec) { toast('No saved world.'); return; }
-    if (rec.world.ver !== SAVE_VER) { toast('That save is from an older version of the game and can’t be loaded here.', 6000); return; }
-    W = rec.world; RS = W.rs;
-    for (const t of W.towns) recomputeMods(t);  // inventions may do new things since this was saved
+    if ((rec.flat ? rec.ver : rec.world.ver) !== SAVE_VER) { toast('That save is from an older version of the game and can’t be loaded here.', 6000); return; }
+    W = rec.flat ? unpackWorld(rec.flat) : rec.world; RS = W.rs;  // older saves hold the world as it was
+    for (const t of W.towns) recomputeMods(t);  // inventions may do new things since this was saved; also widens saves from before the new ones
     startGame();
     setSpeed(0);
     centerOnFirst();
