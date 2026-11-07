@@ -364,6 +364,12 @@ function buildingSprite(b) {
   const office = b.type !== 'house' && BLD[b.type] && BLD[b.type].office && typeof officeSprite === 'function';
   if (b.type !== 'house' && b.type !== 'monument' && !office && !SPR[b.type]) return siteSprite(b.size);  // no art yet: a plain site rather than nothing
   const L = b.type === 'house' && b.town && b.tier <= HOUSE_IX.tenement && typeof townLook === 'function' ? townLook(b.town) : null;
+  if (HOLY[b.type] !== undefined && b.fk >= 0 && typeof faithSprite === 'function') {  // in the look of its faith (faithart.js)
+    const k2 = `${b.type}.f${b.fk}.${pal}`;
+    let s = spriteCache.get(k2);
+    if (!s) { s = faithSprite(b.type, b.fk, b.size, pal); spriteCache.set(k2, s); }
+    return s;
+  }
   const key = b.type === 'house' ? `h${b.tier}.${pal}.${b.var}${L ? '.' + L.key : ''}` : b.type === 'monument' ? `m${b.era || 2}` : `${b.type}.${pal}`;
   let s = spriteCache.get(key);
   if (s) return s;

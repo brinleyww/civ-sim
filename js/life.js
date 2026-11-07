@@ -73,6 +73,19 @@ const TENETS = [
   { id: 'builder', name: 'Temple-building', fx: { build: 1.08, happy: 2 }, about: 'Stone to the sky.' },
 ];
 const FAITH_KIND = ['ancestor spirits', 'the old gods', 'the One', 'the Path', 'the Sun', 'the Great Mother', 'the Book', 'the River'];
+// Each kind of worship raises its own holy houses: shrine, temple, monastery, great cathedral, temple precinct (faithart.js draws them)
+const HOLY = { shrine: 0, temple: 1, monastery: 2, cathedral: 3, templecomplex: 4 };
+const HOLY_NAME = [
+  ['Spirit house', 'Ancestral hall', "Elders' lodge", 'Great ancestral hall', 'Grove of the ancestors'],
+  ['Standing stones', 'Hall of the gods', "Seers' hall", 'Great god-hall', 'Holy enclosure'],
+  ['Wayside chapel', 'Church', 'Abbey', 'Cathedral', 'Cathedral close'],
+  ['Stupa', 'Pagoda', 'Monastery', 'Great pagoda', 'Temple garden'],
+  ['Sun altar', 'Sun temple', 'House of the sun priests', 'Great sun pyramid', 'Sun precinct'],
+  ["Mother's grotto", 'Round temple', "Sisters' house", 'Great domed temple', "Mother's sanctuary"],
+  ['Domed tomb', 'Mosque', 'Madrasa', 'Great mosque', 'Mosque precinct'],
+  ['River shrine', 'River temple', 'Ashram', 'Great tower temple', 'Temple tank and ghats']];
+const faithKindOf = t => { const F = t && t.faith >= 0 ? W.faiths[t.faith] : null; return F ? FAITH_KIND.indexOf(F.kind) : -1; };
+const holyName = b => { const h = HOLY[b.type]; return h !== undefined && b.fk >= 0 ? HOLY_NAME[b.fk][h] : null; };
 function newFaith(t, parent) {
   W.faiths = W.faiths || [];
   const id = W.faiths.length;
@@ -98,6 +111,11 @@ function faithYear(t) {
       recomputeMods(t);
     }
     return;
+  }
+  // holy houses of an older faith are slowly rededicated (or rebuilt) to the one the town now keeps
+  const fk = faithKindOf(t);
+  if (fk >= 0) for (const b of t.blds) if (b.done && !b.ruin && HOLY[b.type] !== undefined && b.fk !== fk && rnd() < (b.fk === undefined || b.fk < 0 ? 0.5 : b.type === 'shrine' ? 0.15 : 0.03)) { b.fk = fk; if (typeof dirtyB === 'function') dirtyB(b); }
+  {
   }
   const F = W.faiths[t.faith];
   F.followers += tn(t);

@@ -1745,11 +1745,11 @@ function yearlyWorld(ph) {
   if (ph === 1) { updatePolities(); return; }
   if (ph === 2) { revolutionsYear(); for (const pol of W.polities) if (pol.alive && pol.towns > 1) reliefYear(pol); return; }
   if (ph === 3) { econYear(); return; }
-  if (ph === 4) { landYear(); return; }
+  if (ph === 4) { landYear(); if (typeof patronYear === 'function') patronYear(); return; }  // js/patron.js: the player's realm
   if (ph === 5) { roadsYear(); modernYear(); return; }
   if (ph === 6) { if (W.terrDirty || Math.floor(W.tick / TPY) % 3 === 0) { W.terrDirty = false; terrBegin(); } return; }
   if (ph === 7) { yearHistory(); return; }
-  if (ph === 8) { disastersYear(); canalsYear(); return; }
+  if (ph === 8) { disastersYear(); canalsYear(); if (typeof wondersYear === 'function') wondersYear(); return; }  // great works (wonders.js)
   // weather wanders: most years are fine, some regions have droughts or floods
   const c = W.climate, drift = W.climateDrift;
   // the weather itself makes the ordinary good and bad years now; this is only the slow swing between wetter and drier decades
@@ -1775,6 +1775,7 @@ function yearHistory() {
     W.history.push(row);
     if (W.history.length > 1600) { W.history = W.history.filter((_, k) => k % 2 === 0); }
   }
+  if (typeof atlasYear === 'function') atlasYear();  // js/atlas.js: who held the land, for the time-lapse
 }
 
 // ---- starting the world ----

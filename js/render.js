@@ -508,6 +508,7 @@ function drawWorld(dt) {
       }
     }
   }
+  if (bmode !== 'off' && typeof drawWonders === 'function') drawWonders(ctx, c, z, bx0, by0, bx1, by1);  // great works (wonderart.js)
   if (typeof drawParked === 'function') drawParked(ctx, c, z, vw, vh);  // parked cars, under the people (parkart.js)
   drawFires(ctx, c, z);
   drawFights(ctx, c, z);

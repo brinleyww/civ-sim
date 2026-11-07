@@ -1363,6 +1363,7 @@ function occupy(t, army, B) {
   const dead = B.sA.dead + B.sB.dead;
   chronT('war', dead < 4 ? `${t.name} opens its gates to the ${polityTitle(pol)}.` : cruel ? `${t.name} falls to the ${polityTitle(pol)} and is put to the sword. ${dead} die in the fighting, and the sack is worse.` : `${t.name} falls to the ${polityTitle(pol)} after a fight that cost ${dead} lives.`, t);
   pathXP(pol, 'con', 120);
+  if (typeof wondersSacked === 'function') wondersSacked(t, pol, cruel);  // its great works looted or pulled down (wonders.js)
   if (cruel) {
     // the people simulated one by one, then the same share of the crowd behind them (tn counts both; members holds only the first)
     for (let k = t.members.length - 1; k >= 0; k--) { const p = t.members[k]; if (p && rnd() < 0.18 && !p.army) killPerson(p, 'killed in the sack'); }

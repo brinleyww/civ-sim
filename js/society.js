@@ -95,6 +95,7 @@ function recomputeMods(t) {
   if (t.faith >= 0 && W.faiths && W.faiths[t.faith]) applyFx(m, faithFx(W.faiths[t.faith]));
   const B = bldMods(t);
   applyFx(m, B.fx);
+  if (typeof wonderFx === 'function') wonderFx(t, m);  // great works it keeps, or its realm does (wonders.js)
   const fort = (t.walls ? (WALL_KIND[t.wallKind] || WALL_KIND[2]).fort : 0) + B.fort;
   t.fortMax = fort;
   t.care = B.care;  // how many people the town's healers can look after
@@ -419,6 +420,7 @@ function addBuilding(t, type, i, tier, instant) {
   const def = type === 'house' ? HOUSES[tier] : BLD[type];
   const size = def.size || 1;
   const b = { type, tier: tier === null ? 0 : tier, town: t, i, x: tx(i), y: ty(i), size, done: false, prog: 0, need: def.work || 50, res: 0, up: -1, id: W.nextId++, k: W.blds.length, ruin: false, ruinYear: 0, age: W.tick, name: '', var: rint(4), cars: 0 };
+  if (HOLY[type] !== undefined) b.fk = faithKindOf(t);  // built in the look of the town's faith
   W.blds.push(b);
   t.blds.push(b);
   for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++) {

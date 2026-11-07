@@ -156,7 +156,7 @@ const ROAD_PROFILE = {
 function roadTilePass(j, pol) {
   const wa = W.water[j];
   if (wa === 2) return false;  // the open sea: no road goes there
-  if (W.occ[j] === 1) { const b = W.bAt.get(j); if (b && b.type !== 'house' && ROAD_KEEP(b.type)) return false; }
+  if (W.occ[j] === 1) { const b = W.bAt.get(j); if (!b || (b.type !== 'house' && ROAD_KEEP(b.type))) return false; }  // no building there: a great work (wonders.js)
   const own = W.townById[W.owner[j]];
   if (own && own.polity !== pol && !areAllies(pol, own.polity) && relOf(pol, own.polity) <= 20) return false;  // a friendly neighbour agrees to the road
   return true;
@@ -167,7 +167,7 @@ function roadTileHard(j, pol) {
   const own = W.townById[W.owner[j]];
   return !!(own && own.polity !== pol && !areAllies(pol, own.polity) && relOf(pol, own.polity) <= 20);
 }
-const keptBld = j => { if (W.occ[j] !== 1) return false; const b = W.bAt.get(j); return !!(b && b.type !== 'house' && ROAD_KEEP(b.type)); };
+const keptBld = j => { if (W.occ[j] !== 1) return false; const b = W.bAt.get(j); return !b || (b.type !== 'house' && ROAD_KEEP(b.type)); };
 // Where a road leaves a town: the nearest street a few tiles out from the centre, on the side facing where it is going.
 function townGate(t, tx2, ty2, pol) {
   const w = W.w, a = Math.atan2(ty2 - t.y, tx2 - t.x);

@@ -36,8 +36,11 @@ function snowSweep() {
       // still water freezes first; the open ocean only in the far cold
       const lim = water[i] === 2 ? 0.1 : W.biome[i] === B.LAKE ? 0.3 : 0.2;
       const v = ice[i];
-      if (T < lim) { if (v < 200) { ice[i] = v + 10; if (v <= 80 && v + 10 > 80) dirty(i); if (v < ICE_WALK && v + 10 >= ICE_WALK) iceTurn(1); } }
-      else if (v > 0) { const nv = v > 20 ? v - 20 : 0; ice[i] = nv; if (v > 80 && nv <= 80) dirty(i); if (v >= ICE_WALK && nv < ICE_WALK) iceTurn(0); }  // walkable ice: core.js
+      // each tile comes round only a few times a year, so one cold visit stands for weeks of frost: the harder the cold, the thicker
+      let nv = v;
+      if (T < lim) { if (v < 200) { const a = (lim - T) * (water[i] === 2 ? 250 : 550); nv = Math.min(200, v + (a < 10 ? 10 : a > 100 ? 100 : a | 0)); } }
+      else if (v > 0) { const a = (T - lim) * 1200; nv = Math.max(0, v - (a < 40 ? 40 : a > 160 ? 160 : a | 0)); }
+      if (nv !== v) { ice[i] = nv; if ((v > 80) !== (nv > 80)) dirty(i); if ((v >= ICE_WALK) !== (nv >= ICE_WALK)) iceTurn(nv >= ICE_WALK ? 1 : 0); }  // walkable ice: core.js
       continue;
     }
     const d = S0[i];

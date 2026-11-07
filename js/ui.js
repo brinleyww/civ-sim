@@ -44,7 +44,7 @@ function setHTML(el, h) {
 }
 function updateRealms() {
   const list = W.polities.filter(p => p.alive && p.pop > 0).sort((a, b) => b.pop - a.pop).slice(0, 40);
-  setHTML($('realmList'), list.map(p => `<div class="realm" data-pol="${p.id}"><i style="background:${p.color}"></i><div class="n">${esc(p.name)}${Object.keys(p.warsWith).length ? ' <em class="atwar">at war</em>' : ''}<small>${GOV[p.gov].name}${p.geo ? ' · ' + esc(GEO[p.geo].name) : ''} · ${ERAS[p.era || 0]}</small></div><div class="p">${fmt(p.pop)}</div></div>`).join(''));
+  setHTML($('realmList'), list.map(p => `<div class="realm" data-pol="${p.id}"><i style="background:${p.color}"></i><div class="n">${typeof patMark === 'function' ? patMark(p) : ''}${esc(p.name)}${Object.keys(p.warsWith).length ? ' <em class="atwar">at war</em>' : ''}<small>${GOV[p.gov].name}${p.geo ? ' · ' + esc(GEO[p.geo].name) : ''} · ${ERAS[p.era || 0]}</small></div><div class="p">${fmt(p.pop)}</div></div>`).join(''));
   const wl = W.wars;
   $('warCount').textContent = wl.length ? `(${wl.length})` : '';
   const fights = W.battles.slice().sort((a, b) => (b.sA.men0 + b.sB.men0) - (a.sA.men0 + a.sB.men0)).slice(0, 8);
@@ -111,7 +111,7 @@ function updateInspector() {
   if (s.kind === 'person') { h = personHTML(s.obj); title = s.obj.name; }
   else if (s.kind === 'town') { title = s.obj.name; h = !s.obj.alive ? `<div class="sub">Abandoned. Only ruins remain.</div>` : townHTML(s.obj); }
   else if (s.kind === 'pol') { title = polityTitle(s.obj); h = polHTML(s.obj); }
-  else if (s.kind === 'building') { const b = s.obj; title = b.ruin ? 'Ruins' : (b.name || (b.type === 'house' ? HOUSES[b.tier].name : BLD[b.type].name)); h = buildingHTML(b); }
+  else if (s.kind === 'building') { const b = s.obj; title = b.ruin ? 'Ruins' : (b.name || holyName(b) || (b.type === 'house' ? HOUSES[b.tier].name : BLD[b.type].name)); h = buildingHTML(b); }
   else if (s.kind === 'tile') { title = BIOME_NAME[W.biome[s.obj]]; h = tileHTML(s.obj); }
   else if (s.kind === 'ship') { title = s.obj.name; h = shipHTML(s.obj); }
   else if (s.kind === 'battle') { title = s.obj.name; h = battleHTML(s.obj); }
@@ -264,7 +264,7 @@ function townHTML(t) {
   jobs.sort((a, b) => b[1] - a[1]);
   const ks = []; for (let i = 0; i < NT; i++) if (t.tech[i] && !TECHS[i].start) ks.push(TECHS[i]);
   const blds = {};
-  for (const b of t.blds) { if (!b.done || b.type === 'hearth') continue; const nm = b.type === 'house' ? HOUSES[b.tier].name : BLD[b.type].name; blds[nm] = (blds[nm] || 0) + 1; }
+  for (const b of t.blds) { if (!b.done || b.type === 'hearth') continue; const nm = b.type === 'house' ? HOUSES[b.tier].name : holyName(b) || BLD[b.type].name; blds[nm] = (blds[nm] || 0) + 1; }
   const rose = t.risings && t.risings[t.risings.length - 1];
   const status = [t.occupier ? `<b style="color:#ff8f7a">Occupied by ${esc(t.occupier.name)}</b>` : '', t.polity.rebel && !t.polity.rebel.over ? `<b style="color:#ff8f7a">In revolt against ${esc((W.polities[t.polity.rebel.from] || {}).name || 'its realm')} since ${t.polity.rebel.start | 0}</b>` : '', rose && !t.polity.rebel ? `<span>Rose against ${esc(rose.against)} in ${rose.yr}: ${rose.won ? 'won its freedom' : 'crushed'}</span>` : '',t.attack ? '<b style="color:#ff8f7a">Under attack</b>' : '', t.sick > 0 ? '<b style="color:#c3e36a">Plague</b>' : '', t.famine > 1 ? '<b style="color:#f0b46a">Famine</b>' : '', t.crowd > 1.15 ? '<b style="color:#f0b46a">Overcrowded</b>' : '', t.unrest > 45 ? '<b style="color:#ff8f7a">Restless</b>' : '', t.blockaded > W.tick ? '<b style="color:#ff8f7a">Blockaded</b>' : '', ...boonTags(t)].filter(Boolean).join(' · ');
   // what this town is closest to working out
@@ -322,6 +322,7 @@ function townHTML(t) {
   <div class="tags">${arms.join('') || '<span>The store is empty</span>'}</div>
   ${t.ships.length || t.shipQ || t.portLv ? `<h4>Port</h4><div class="sub">${t.ships.length ? t.ships.length + ' ships' : 'No ships yet'}${t.shipQ ? ` · ${(t.shipQ.kind === 'war' ? WARSHIPS : MERCHANTMEN)[t.shipQ.type].name} on the slip, ${Math.floor(t.shipQ.prog / t.shipQ.need * 100)}%` : ''}</div>
   <div class="tags">${t.ships.slice(0, 10).map(s => `<a class="link" data-act="ship" data-id="${s.id}">${esc(s.name)}</a>`).join(' ')}</div>` : ''}
+  ${typeof wonderTownHTML === 'function' ? wonderTownHTML(t) : ''}
   <h4>Buildings</h4><div class="tags">${Object.entries(blds).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span>${v > 1 ? v + ' ' : ''}${esc(k)}</span>`).join('') || '<span>Nothing yet</span>'}</div>
   ${t.queue.length ? `<div class="sub" style="margin-top:4px">Under construction: ${t.queue.slice(0, 4).map(b => b.type === 'house' ? HOUSES[b.up >= 0 ? b.up : b.tier].name : BLD[b.type].name).join(', ')}</div>` : ''}
   <h4>Knows (${ks.length})</h4><div class="tags">${ks.slice(-14).reverse().map(T => `<span>${esc(T.name)}</span>`).join('')}${ks.length > 14 ? '<span>…</span>' : ''}</div>`;
@@ -526,6 +527,7 @@ function tileHTML(i) {
     if (W.lane[i] >= SEA_LANE) rows.push(['Shipping', W.seaW[i] ? 'A widened fairway: ships keep to the right' : W.lane[i] >= SEA_LANE * 3 ? 'A busy shipping lane' : 'A shipping lane']);
   }
   landTileRows(i, rows);
+  if (typeof wonderTileRows === 'function') wonderTileRows(i, rows);
   if (W.snowD[i] > 5) rows.push(['Snow', W.snowD[i] > 200 ? 'Glacier' : `${W.snowD[i]} cm`]);
   if (W.wx) rows.push(['Weather', wxDescribe(i)]);
   if (W.type === 'earth') { const lat = earthLat((i / W.w) | 0, W.h), lon = ((i % W.w) + 0.5) / W.w * 360 + EARTH_LON0, L = lon > 180 ? lon - 360 : lon; rows.push(['On the globe', `${Math.abs(lat).toFixed(0)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(L).toFixed(0)}°${L >= 0 ? 'E' : 'W'}`]); }
@@ -830,6 +832,7 @@ function renderStats() {
     <div><h3 style="font:600 14px var(--sans);color:var(--chart-ink);margin-bottom:4px">How people died</h3>
       <table class="dt"><thead><tr><th>Cause</th><th>Deaths</th></tr></thead><tbody>${causes.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${fmt(v)}</td></tr>`).join('')}</tbody></table></div>
   </div>
+  ${typeof wondersStatsHTML === 'function' ? wondersStatsHTML() : ''}
   ${W.warLog.length ? `<h3 style="font:600 14px var(--sans);color:var(--chart-ink);margin:12px 0 4px">Wars of history</h3><table class="dt"><thead><tr><th>War</th><th>Years</th><th>Sides</th><th>Won by</th><th>Dead</th><th>Towns taken</th></tr></thead><tbody>${W.warLog.slice().reverse().slice(0, 30).map(w => `<tr><td>${esc(w.name)}</td><td>${w.from}–${w.to}</td><td>${esc(w.sideA)} v ${esc(w.sideB)}</td><td>${esc(w.winner || 'nobody')}</td><td>${fmt(w.dead)}</td><td>${w.taken}</td></tr>`).join('')}</tbody></table>` : ''}`;
   syncPopCtl();
   if (H.length < 2) return;
@@ -974,6 +977,10 @@ const HELP_HTML = `
 <p><b>Money between realms.</b> Each realm's money floats against the others. Merchants pay across borders, migrants carry their savings and send money home, rich treasuries lend to short ones (and remember a default), friends send aid in famine, and vassals and losers pay tribute and reparations. The Economy window shows exchange rates, payments and loans. People's own savings decide who goes hungry first in a shortage.</p>
 <p><b>The Agricultural and Industrial Revolutions.</b> Each realm goes through its own, stage by stage. The farming one (new rotations, improved breeds, enclosure, drills and drains, farm machines) is pushed by land hunger, markets and learning, and raises harvests, herds and how much land one farmer works; enclosure drives smallholders into the towns. The industrial one (cottage industry, mills, steam, coal and iron, factories, railways) needs coal, iron, capital, markets and the hands the farming revolution frees up; it multiplies what towns make and swells the cities, at first with smoke, disease and riots, until sanitation and unions catch up. Realms that come later catch up faster by copying those ahead. Statistics shows who leads in inventions and in each revolution; a realm's panel shows its progress.</p>
 <p><b>Food.</b> A town that runs short kills part of its herd, falls back on famine foods, buys grain from neighbours that have some to spare, and later on its state runs relief. New villages live off the land until their first harvest, with provisions from the town they left. Dozens of food inventions and buildings make each step stronger.</p>
+<p><b>Patron.</b> Press Patron to champion one realm. It earns Favour each year as it grows, wins and keeps the peace; spend it on edicts such as war, peace, levies, a research focus, taxes, festivals, colonies, a new government or faith, or a great work. Three ambitions at a time add to your legacy. If your realm falls, you can take up whoever holds its towns.</p>
+<p><b>Atlas.</b> Every few years the borders of the world are recorded. Press Atlas to play history back: drag the slider, hover a realm to see its size that year, click it to follow it through time, and click the chart below to jump to a year.</p>
+<p><b>Great works.</b> Rich towns raise wonders fitting their age and faith, from stone circles and ziggurats to cathedrals, observatories, opera houses and space centres. Each takes years and gives its town or realm a lasting edge. Sacked wonders are looted or left in ruins, and can be restored later.</p>
+<p><b>Holy buildings.</b> Every kind of worship builds in its own style: spirit houses for the ancestors, stave halls for the old gods, churches for the One, pagodas for the Path, stepped pyramids for the Sun, round temples for the Great Mother, mosques for the Book and tower temples over bathing tanks for the River. A town that changes faith slowly rededicates its old ones.</p>
 <p><b>City walls.</b> A threatened town rings itself with walls that follow its own shape: a timber palisade at first, stone once it knows masonry, and low bastioned walls against cannon later on. Roads pass through gatehouses. Towers shoot at besiegers (muskets, once the town has them), bastions turn aside half of every cannonball, breaches are patched after the siege, and a town that outgrows its walls builds a wider circuit. In the railway age a big, safe city pulls them down, and a boulevard follows the line.</p>
 <p><b>The modern world.</b> Telephones, microchips, mobile phones and social media spread news faster (social media also stirs up unrest). Realms that know of the World Assembly send delegates to the biggest member capital: grudges between members cool and their wars end sooner. Every four years a big city hosts the International Games. Once people fly abroad, sights, beaches, theme parks and hotels bring in foreign tourists and their money. Nobody lightly attacks a realm with nuclear missiles, least of all another nuclear realm. In war, jet fighters shoot down far more bombers, drones strike more often and are hard to hit, helicopter gunships rake troops in the open, rocket launchers fire whole salvos, and a cyber command can black out an enemy capital or empty its banks.</p>
 <p><b>The home front.</b> Every realm at war has a level of support at home. Invaded peoples fight on; long wars of conquest with heavy losses, high taxes and rising prices lose support, and with it morale, recruits and in the end the war. Rich realms hire mercenaries. Archers shoot better downhill, attackers tire going uphill, and surgeons save some of the fallen.</p>

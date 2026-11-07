@@ -421,7 +421,7 @@ function initInput() {
 }
 function closeModals() {
   let any = false;
-  for (const id of ['techModal', 'statsModal', 'helpModal', 'econModal', 'fbModal']) if (!$(id).hidden) { $(id).hidden = true; any = true; }
+  for (const id of ['techModal', 'statsModal', 'helpModal', 'econModal', 'fbModal', 'patronModal']) if ($(id) && !$(id).hidden) { $(id).hidden = true; any = true; }
   return any;
 }
 function hoverTip(sx, sy) {
@@ -431,11 +431,13 @@ function hoverTip(sx, sy) {
   if (i < 0) { tip.hidden = true; return; }
   const b = W.bAt.get(i);
   let text = '';
-  if (b && !b.ruin) text = b.name || (b.type === 'house' ? HOUSES[b.tier].name : BLD[b.type].name);
+  if (b && !b.ruin) text = b.name || holyName(b) || (b.type === 'house' ? HOUSES[b.tier].name : BLD[b.type].name);
   else if (b) text = 'Ruins';
+  else if (typeof wonderAt === 'function' && wonderAt(i)) text = wonderTip(wonderAt(i));  // a great work (wonders.js)
   else if (W.occ[i] === 2) text = `Field: ${['fallow', 'just sown', 'growing', 'ripe'][W.stage[i]]}`;
   else if (W.plant[i]) text = `${PLANTS[W.plant[i]].name}: ${['just planted', 'growing', 'ready to pick'][W.plantS[i]]}`;
   else if (W.ore[i] > 0 && W.oreAmt[i] > 0) text = `${ORE_NAME[W.ore[i]]} deposit`;
+  else if (typeof bridgeAt === 'function' && bridgeAt(i)) { const br = bridgeInfo(i); text = `${br.name}${br.name.includes(br.kind) ? '' : ' (' + br.kind.toLowerCase() + ')'}${br.built ? ', built ' + br.built : ''}${br.broken ? ' · broken' : ''}`; }
   else if (W.road[i]) text = ['', 'Footpath', 'Dirt road', 'Paved road', 'Asphalt road'][W.road[i]];
   // whatever else is here, say whose land it is
   const wn = waterNameAt(i);
